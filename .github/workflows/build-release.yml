@@ -1,0 +1,126 @@
+name: Build UMEDJON APK from source
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing unpublished draft tag, for example v19.4
+        required: true
+        default: v19.4
+      source_archive:
+        description: Public source ZIP already attached to this draft
+        required: true
+        default: File-Manager-UMEDJON-19.4-Source.zip
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout workflow repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Android build tools
+        uses: android-actions/setup-android@v3
+
+      - name: Install APK inspection tools
+        run: sdkmanager 'build-tools;35.0.0'
+
+      - name: Fetch public sources from the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          SOURCE_ARCHIVE: ${{ inputs.source_archive }}
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq '.draft')" = true
+          gh release download "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --pattern "${SOURCE_ARCHIVE}" --dir "$RUNNER_TEMP"
+          unzip -q "$RUNNER_TEMP/${SOURCE_ARCHIVE}" -d "$RUNNER_TEMP/project"
+          test -f "$RUNNER_TEMP/project/UMEDJON-Source/scripts/build.py"
+          test ! -e "$RUNNER_TEMP/project/UMEDJON-Source/keys/signing.json"
+          test ! -e "$RUNNER_TEMP/project/UMEDJON-Source/keys/umedjon.jks"
+
+      - name: Restore the original signing key from Secrets
+        env:
+          UMEDJON_KEYSTORE_BASE64: ${{ secrets.UMEDJON_KEYSTORE_BASE64 }}
+          UMEDJON_STORE_PASS: ${{ secrets.UMEDJON_STORE_PASS }}
+          UMEDJON_KEY_PASS: ${{ secrets.UMEDJON_KEY_PASS }}
+          UMEDJON_KEY_ALIAS: ${{ secrets.UMEDJON_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          test -n "${UMEDJON_KEYSTORE_BASE64}" && test -n "${UMEDJON_STORE_PASS}" && test -n "${UMEDJON_KEY_PASS}" && test -n "${UMEDJON_KEY_ALIAS}"
+          printf '%s' "${UMEDJON_KEYSTORE_BASE64}" | base64 --decode > "$RUNNER_TEMP/umedjon-original.jks"
+          chmod 600 "$RUNNER_TEMP/umedjon-original.jks"
+
+      - name: Build and sign source APK
+        env:
+          UMEDJON_STORE_PASS: ${{ secrets.UMEDJON_STORE_PASS }}
+          UMEDJON_KEY_PASS: ${{ secrets.UMEDJON_KEY_PASS }}
+          UMEDJON_KEY_ALIAS: ${{ secrets.UMEDJON_KEY_ALIAS }}
+          UMEDJON_KEYSTORE_PATH: ${{ runner.temp }}/umedjon-original.jks
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/project/UMEDJON-Source"
+          python3 scripts/build.py
+          test -s output/File-Manager-UMEDJON-19.4.apk
+
+      - name: Verify package, version, signer and SHA-256
+        run: |
+          set -euo pipefail
+          APK="$RUNNER_TEMP/project/UMEDJON-Source/output/File-Manager-UMEDJON-19.4.apk"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" > "$RUNNER_TEMP/badging.txt"
+          python3 - <<'PY'
+          import pathlib,re,os
+          text=(pathlib.Path(os.environ['RUNNER_TEMP'])/'badging.txt').read_text()
+          match=re.search(r"^package: name='([^']+)' versionCode='([^']+)' versionName='([^']+)'",text,re.M)
+          assert match, 'Unable to read APK package identity'
+          assert match.groups()==('com.umedjon.filemanager','2103105','19.4'),match.groups()
+          PY
+          java -jar "$RUNNER_TEMP/project/UMEDJON-Source/toolchain/sdk/android-15/lib/apksigner.jar" verify --verbose "$APK"
+          sha256sum "$APK"
+
+      - name: Upload verified APK as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: File-Manager-UMEDJON-19.4-signed
+          path: ${{ runner.temp }}/project/UMEDJON-Source/output/File-Manager-UMEDJON-19.4.apk
+          if-no-files-found: error
+
+      - name: Attach signed APK and short update metadata to the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq '.draft')" = true
+          APK="$RUNNER_TEMP/project/UMEDJON-Source/output/File-Manager-UMEDJON-19.4.apk"
+          gh release upload "$RELEASE_TAG" "$APK" --repo "$GITHUB_REPOSITORY" --clobber
+          python3 - <<'PY'
+          import hashlib,json,os,pathlib
+          tag=os.environ['RELEASE_TAG'];repo=os.environ['GITHUB_REPOSITORY']
+          apk=pathlib.Path(os.environ['RUNNER_TEMP'])/'project/UMEDJON-Source/output/File-Manager-UMEDJON-19.4.apk'
+          out=pathlib.Path(os.environ['RUNNER_TEMP'])/'update.json'
+          data={'versionName':'19.4','versionCode':2103105,
+                'apkUrl':f'https://github.com/{repo}/releases/download/{tag}/{apk.name}',
+                'sha256':hashlib.sha256(apk.read_bytes()).hexdigest(),
+                'notes':'PDF: включение фотографий, прогресс и редактор; плеер: два ряда кнопок.',
+                'releaseUrl':f'https://github.com/{repo}/releases/tag/{tag}'}
+          out.write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n')
+          PY
+          gh release upload "$RELEASE_TAG" "$RUNNER_TEMP/update.json" --repo "$GITHUB_REPOSITORY" --clobber
+          test "$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq '.draft')" = true
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json name,isDraft,assets,url
