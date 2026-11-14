@@ -1,0 +1,368 @@
+--- a/.github/workflows/build-release.yml
++++ b/.github/workflows/build-release.yml
+@@ -1,4 +1,4 @@
+-name: Build and draft UMEDJON 19.5
++name: Build and draft UMEDJON 19.6
+ 
+ on:
+   workflow_dispatch:
+@@ -31,16 +31,18 @@
+       - name: Install APK inspection tools
+         run: sdkmanager 'build-tools;35.0.0'
+ 
+-      - name: Restore complete sources from versioned repository chunks
++      - name: Restore verified 19.5 sources and apply the 19.6 fix
+         run: |
+           set -euo pipefail
+           test -d sources/v19.5
+           test -f sources/v19.5/SHA256SUMS
++          test -f patches/v19.6.patch
+           (cd sources/v19.5 && sha256sum -c SHA256SUMS)
+           cat sources/v19.5/source.part-* > "$RUNNER_TEMP/File-Manager-UMEDJON-19.5-Source.zip"
+           unzip -tq "$RUNNER_TEMP/File-Manager-UMEDJON-19.5-Source.zip"
+           unzip -q "$RUNNER_TEMP/File-Manager-UMEDJON-19.5-Source.zip" -d "$RUNNER_TEMP/project"
+           test -f "$RUNNER_TEMP/project/UMEDJON-Source/scripts/build.py"
++          (cd "$RUNNER_TEMP/project/UMEDJON-Source" && patch --batch --forward -p1 < "$GITHUB_WORKSPACE/patches/v19.6.patch")
+           test ! -e "$RUNNER_TEMP/project/UMEDJON-Source/keys/signing.json"
+           test ! -e "$RUNNER_TEMP/project/UMEDJON-Source/keys/umedjon.jks"
+ 
+@@ -49,6 +51,7 @@
+           set -euo pipefail
+           cd "$RUNNER_TEMP/project/UMEDJON-Source"
+           python3 -m unittest discover -s tests/release195 -p check.py -v
++          python3 -m unittest discover -s tests/release196 -p check.py -v
+ 
+       - name: Restore the original signing key from Secrets
+         env:
+@@ -72,19 +75,19 @@
+           set -euo pipefail
+           cd "$RUNNER_TEMP/project/UMEDJON-Source"
+           python3 scripts/build.py
+-          test -s output/File-Manager-UMEDJON-19.5.apk
++          test -s output/File-Manager-UMEDJON-19.6.apk
+ 
+       - name: Verify package, version, signer and SHA-256
+         run: |
+           set -euo pipefail
+-          APK="$RUNNER_TEMP/project/UMEDJON-Source/output/File-Manager-UMEDJON-19.5.apk"
++          APK="$RUNNER_TEMP/project/UMEDJON-Source/output/File-Manager-UMEDJON-19.6.apk"
+           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" > "$RUNNER_TEMP/badging.txt"
+           python3 - <<'PY'
+           import pathlib,re,os
+           text=(pathlib.Path(os.environ['RUNNER_TEMP'])/'badging.txt').read_text()
+           match=re.search(r"^package: name='([^']+)' versionCode='([^']+)' versionName='([^']+)'",text,re.M)
+           assert match, 'Unable to read APK package identity'
+-          assert match.groups()==('com.umedjon.filemanager','2103106','19.5'),match.groups()
++          assert match.groups()==('com.umedjon.filemanager','2103107','19.6'),match.groups()
+           PY
+           java -jar "$RUNNER_TEMP/project/UMEDJON-Source/toolchain/sdk/android-15/lib/apksigner.jar" verify --verbose "$APK"
+           sha256sum "$APK"
+@@ -92,27 +95,39 @@
+       - name: Upload verified APK as workflow artifact
+         uses: actions/upload-artifact@v4
+         with:
+-          name: File-Manager-UMEDJON-19.5-signed
+-          path: ${{ runner.temp }}/project/UMEDJON-Source/output/File-Manager-UMEDJON-19.5.apk
++          name: File-Manager-UMEDJON-19.6-signed
++          path: ${{ runner.temp }}/project/UMEDJON-Source/output/File-Manager-UMEDJON-19.6.apk
+           if-no-files-found: error
++
++      - name: Package complete public 19.6 sources without private keys
++        run: |
++          set -euo pipefail
++          cd "$RUNNER_TEMP/project/UMEDJON-Source"
++          python3 scripts/package-release195.py --public-only
++          SOURCE="$RUNNER_TEMP/deliverables/File-Manager-UMEDJON-19.6-Source.zip"
++          unzip -tq "$SOURCE"
++          if unzip -Z -1 "$SOURCE" | grep -E '^UMEDJON-Source/keys/'; then
++            echo 'Signing material detected in public ZIP' >&2
++            exit 1
++          fi
+ 
+       - name: Create an unpublished draft automatically with built artifacts
+         env:
+           GH_TOKEN: ${{ github.token }}
+-          RELEASE_TAG: v19.5
++          RELEASE_TAG: v19.6
+         run: |
+           set -euo pipefail
+-          APK="$RUNNER_TEMP/project/UMEDJON-Source/output/File-Manager-UMEDJON-19.5.apk"
+-          SOURCE="$RUNNER_TEMP/File-Manager-UMEDJON-19.5-Source.zip"
++          APK="$RUNNER_TEMP/project/UMEDJON-Source/output/File-Manager-UMEDJON-19.6.apk"
++          SOURCE="$RUNNER_TEMP/deliverables/File-Manager-UMEDJON-19.6-Source.zip"
+           python3 - <<'PY'
+           import hashlib,json,os,pathlib
+           tag=os.environ['RELEASE_TAG'];repo=os.environ['GITHUB_REPOSITORY']
+-          apk=pathlib.Path(os.environ['RUNNER_TEMP'])/'project/UMEDJON-Source/output/File-Manager-UMEDJON-19.5.apk'
++          apk=pathlib.Path(os.environ['RUNNER_TEMP'])/'project/UMEDJON-Source/output/File-Manager-UMEDJON-19.6.apk'
+           out=pathlib.Path(os.environ['RUNNER_TEMP'])/'update.json'
+-          data={'versionName':'19.5','versionCode':2103106,
++          data={'versionName':'19.6','versionCode':2103107,
+                 'apkUrl':f'https://github.com/{repo}/releases/download/{tag}/{apk.name}',
+                 'sha256':hashlib.sha256(apk.read_bytes()).hexdigest(),
+-                'notes':'PDF: описания новых страниц, порядок чтения, встроенное сохранение и всплывающий прогресс.',
++                'notes':'Исправлен возврат после открытия созданного PDF: окно завершения больше не появляется повторно.',
+                 'releaseUrl':f'https://github.com/{repo}/releases/tag/{tag}'}
+           out.write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n')
+           PY
+@@ -122,8 +137,8 @@
+           else
+             gh release create "$RELEASE_TAG" "$APK" "$SOURCE" "$RUNNER_TEMP/update.json" \
+               --repo "$GITHUB_REPOSITORY" --draft --target "$GITHUB_SHA" \
+-              --title 'Файловый менеджер UMEDJON 19.5 — тестовая сборка' \
+-              --notes 'Новые страницы PDF с описаниями; улучшение порядка скринридера; встроенное сохранение PDF; всплывающий прогресс. Требуется проверка на устройстве.'
++              --title 'Файловый менеджер UMEDJON — версия 19.6' \
++              --notes 'Исправлен возврат после открытия созданного PDF: окно завершения больше не появляется повторно.'
+           fi
+           test "$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq '.draft')" = true
+           gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json name,isDraft,assets,url \
+--- a/BUILD-RESULT.json
++++ b/BUILD-RESULT.json
+@@ -1,25 +1,21 @@
+ {
+-  "apk": "File-Manager-UMEDJON-19.5.apk",
+-  "version": "19.5",
+-  "version_code": 2103106,
+-  "previous_version_code": 2103105,
+-  "purpose": "PDF page descriptions and reading order; built-in safe PDF save dialog; popup progress; automated release creation workflow",
++  "apk": "File-Manager-UMEDJON-19.6.apk",
++  "version": "19.6",
++  "version_code": 2103107,
++  "previous_version_code": 2103106,
++  "purpose": "Close completed PDF progress UI after opening the document; keep Back navigation and background queue intact",
+   "bytes": 25824418,
+-  "sha256": "9c8ba4b838e7b0c8a105aa0bcfa3b26b5679276649ca29471de1fd854d5cfc0b",
++  "sha256": "7c82f315e54a6dcaac88a5a3a4a234211326cc5fc244bd7f79cd126420f23aa2",
+   "signing_certificate_sha256": "6259589d30dcf7fb984b1f973ed50c7e2a32372a0eb05c13efaa2cbac554a899",
+   "application_id": "com.umedjon.filemanager",
+   "changed_java_files": [
+-    "PdfPageView.java",
+-    "PdfEditEngine.java",
+-    "PdfEditorActivity.java",
+-    "PhotoPdfActivity.java",
+-    "PhotoPdfQueueActivity.java",
+-    "PdfActivity.java"
++    "PhotoPdfProgressDialog.java",
++    "PhotoPdfProgressActivity.java"
+   ],
+-  "added_java_files": ["PhotoPdfProgressDialog.java", "PdfEditorOutput.java"],
++  "added_java_files": [],
+   "changed_smali_files": [],
+   "changed_resources": ["apktool.yml"],
+-  "scripts_changed": ["scripts/package-release195.py", ".github/workflows/build-release.yml"],
++  "scripts_changed": [".github/workflows/build-release.yml"],
+   "pdf_database_migrated_from_1_to_2": true,
+   "backup_engine_unchanged": true,
+   "zip_crc_verified": true,
+@@ -30,6 +26,7 @@
+   },
+   "static_checks": {
+     "tests/release195/check.py": "6/6 passed",
++    "tests/release196/check.py": "5/5 passed",
+     "tests/release195/PdfInsertedPageJvm.java": "passed (PDF page insertion and text stream persisted)",
+     "tests/release194/PdfTextEditJvm.java": "passed (PDF true text replacement)",
+     "verify_dex": "passed",
+--- a/README-RU.md
++++ b/README-RU.md
+@@ -1,6 +1,12 @@
+-Файловый менеджер UMEDJON 19.5
+-Версия: 19.5; versionCode: 2103106.
++Файловый менеджер UMEDJON 19.6
++Версия: 19.6; versionCode: 2103107.
+ Пакет: com.umedjon.filemanager.
++
++Изменения версии 19.6
++
++- Исправлен возврат после открытия созданного PDF: окно завершения больше не появляется повторно.
++- Кнопка «Открыть PDF» закрывает успешно завершённый диалог после запуска просмотра. При возврате «Назад» открывается исходный экран файлового менеджера.
++- Аналогичное исправление применено к экрану задания, открываемому из уведомления. Очередь и сохранение PDF не изменены.
+ 
+ Изменения версии 19.5 (тестовая сборка)
+ 
+--- a/RESTORE-AND-HANDOFF-RU.md
++++ b/RESTORE-AND-HANDOFF-RU.md
+@@ -1,10 +1,10 @@
+-# Файловый менеджер UMEDJON 19.5 — восстановление проекта
++# Файловый менеджер UMEDJON 19.6 — восстановление проекта
+ 
+ ## Основа
+ 
+ - `applicationId`: `com.umedjon.filemanager`
+-- `versionName`: `19.5`
+-- `versionCode`: `2103106` (версия 19.4 имела `2103105`)
++- `versionName`: `19.6`
++- `versionCode`: `2103107` (опубликованная версия 19.5 имеет `2103106`)
+ - SHA-256 исходного сертификата: `6259589d30dcf7fb984b1f973ed50c7e2a32372a0eb05c13efaa2cbac554a899`
+ - Архитектура: Java-классы из `src/`, оригинальный smali из `apk/smali_classes*`, библиотеки в `lib/`, инструменты в `toolchain/`, сборка в `scripts/build.py`.
+ 
+@@ -16,12 +16,12 @@
+ 2. На Linux x86_64 установить Java 17 и Python 3.11+.
+ 3. Убедиться, что `keys/umedjon.jks` и `keys/signing.json` находятся в каталоге проекта. Пароли и alias уже записаны в приватном комплекте — не пересылать их открытым текстом.
+ 4. Запустить в корне проекта `python3 scripts/build.py`.
+-5. Проверить `output/File-Manager-UMEDJON-19.5.apk`: подпись, пакет, версии и контрольную сумму. Сборщик автоматически отвергает чужой сертификат.
+-6. Не удалять данные приложения при установке поверх 19.4. Для проверки пользователь должен использовать штатный Android Installer.
++5. Проверить `output/File-Manager-UMEDJON-19.6.apk`: подпись, пакет, версии и контрольную сумму. Сборщик автоматически отвергает чужой сертификат.
++6. Не удалять данные приложения при установке поверх 19.5. Для проверки пользователь должен использовать штатный Android Installer.
+ 
+ ## Публичный архив и GitHub Actions
+ 
+-Публичный ZIP содержит исходники, зависимости, тесты, скрипты и `.github/workflows/build-release.yml`, но **не содержит** приватных ключей и паролей. Для запуска GitHub Actions **не требуется** заранее создавать черновик: публичные исходники версии 19.5 хранятся в репозитории в проверяемых частях `sources/v19.5/source.part-*` и восстанавливаются через SHA256SUMS. После сборки workflow сам создаёт черновик `v19.5` и прикрепляет проверенные файлы.
++Публичный ZIP содержит исходники, зависимости, тесты, скрипты и `.github/workflows/build-release.yml`, но **не содержит** приватных ключей и паролей. Для запуска GitHub Actions **не требуется** заранее создавать черновик: workflow проверяет хеши исходных частей опубликованной 19.5 в `sources/v19.5/`, применяет точечный текстовый патч `patches/v19.6.patch`, собирает версию 19.6 и создаёт полный публичный ZIP из обновлённых исходников. После сборки workflow создаёт неопубликованный черновик `v19.6` и прикрепляет проверенные файлы.
+ 
+ Потребуются четыре GitHub Actions Repository Secrets, устанавливаемые только в настройках репозитория владельцем:
+ 
+--- a/VERIFICATION-RU.txt
++++ b/VERIFICATION-RU.txt
+@@ -1,3 +1,19 @@
++Файловый менеджер UMEDJON 19.6 · versionName 19.6 · versionCode 2103107 · пакет com.umedjon.filemanager
++
++ПРОВЕРКИ 19.6 (локально, без утверждений о тестировании на телефоне):
++- Причина: по нажатию «Открыть PDF» в диалоге завершения запускался просмотр, но диалог оставался открытым.
++- Теперь успешный запуск просмотра закрывает диалог; его OnDismiss останавливает опрос, а PhotoPdfActivity завершается, как и при обычном закрытии окна.
++- Для PhotoPdfProgressActivity, вызываемой из уведомления, после запуска просмотра вызывается finish(), чтобы экран завершённого задания не оставался в back stack.
++- «Скрыть», «Отмена», фоновая очередь и результат PDF не изменены.
++- tests/release196/check.py: 5/5 проверок; tests/release195/check.py: 6/6 проверок.
++- scripts/build.py: компиляция Java, формирование DEX, apktool, zipalign и подпись — успешно.
++- aapt2: пакет com.umedjon.filemanager, versionName=19.6, versionCode=2103107, minSdk=21, targetSdk=35.
++- APK: 25824418 байт; SHA-256 7c82f315e54a6dcaac88a5a3a4a234211326cc5fc244bd7f79cd126420f23aa2.
++- Подпись прежняя: сертификат SHA-256 6259589d30dcf7fb984b1f973ed50c7e2a32372a0eb05c13efaa2cbac554a899.
++- НЕ ПРОВЕРЕНО: сценарии на реальном Android/HyperOS, Jieshuo/TalkMan и TalkBack; облачный GitHub Actions-run для версии 19.6.
++
++Ниже — историческая проверка 19.5.
++
+ Файловый менеджер UMEDJON 19.5 · versionName 19.5 · versionCode 2103106 · пакет com.umedjon.filemanager
+ 
+ ПРОВЕРКИ 19.5 (локальная сборка, без утверждений о тестировании на телефоне):
+--- a/apk/apktool.yml
++++ b/apk/apktool.yml
+@@ -9,8 +9,8 @@
+ packageInfo:
+   forcedPackageId: 127
+ versionInfo:
+-  versionCode: '2103106'
+-  versionName: 19.5
++  versionCode: '2103107'
++  versionName: 19.6
+ doNotCompress:
+ - arsc
+ - dex
+--- a/scripts/package-release195.py
++++ b/scripts/package-release195.py
+@@ -1,7 +1,7 @@
+ #!/usr/bin/env python3
+ """Produce public and private complete source ZIPs for the current app version."""
+ from pathlib import Path
+-import hashlib,re,zipfile
++import hashlib,re,zipfile,sys
+ 
+ root=Path(__file__).resolve().parents[1]
+ version=re.search(r'versionName:\s*(\S+)',(root/'apk/apktool.yml').read_text()).group(1)
+@@ -33,6 +33,7 @@
+     return True
+ 
+ for private,suffix in ((False,'-Source.zip'),(True,'-Full-Source-PRIVATE.zip')):
++    if private and '--public-only' in sys.argv:continue
+     target=out/('File-Manager-UMEDJON-'+version+suffix)
+     with zipfile.ZipFile(target,'w',zipfile.ZIP_DEFLATED,compresslevel=5)as archive:
+         for item in sorted(root.rglob('*')):
+--- a/src/com/umedjon/filemanager/PhotoPdfProgressDialog.java
++++ b/src/com/umedjon/filemanager/PhotoPdfProgressDialog.java
+@@ -56,8 +56,13 @@
+                 .setTitle("Отменить создание PDF?").setMessage("Оригинальные фотографии останутся без изменений")
+                 .setNegativeButton("Продолжить",null).setPositiveButton("Отменить",(a,b)->PhotoPdfService.cancel(owner,id)).show());
+             dialog.getButton(-1).setOnClickListener(v->{PhotoPdfStore.Job job=store.job(id);
+-                if(job!=null&&PhotoPdfStore.DONE.equals(job.state)&&!job.result.isEmpty())
+-                    PhotoPdfResultActivity.open(owner,Uri.parse(job.result),job.folder);});
++                if(job!=null&&PhotoPdfStore.DONE.equals(job.state)&&!job.result.isEmpty()){
++                    // Launch first: if Android cannot open the result, keep the
++                    // completed dialog available for retry. Dismiss on success
++                    // so Back from the PDF cannot reveal this stale popup.
++                    PhotoPdfResultActivity.open(owner,Uri.parse(job.result),job.folder);
++                    dialog.dismiss();
++                }});
+             refresher[0].run();
+         });
+         dialog.setOnDismissListener(d->{stopped[0]=true;handler.removeCallbacks(refresher[0]);if(onHide!=null)onHide.run();});
+--- a/src/com/umedjon/filemanager/PhotoPdfProgressActivity.java
++++ b/src/com/umedjon/filemanager/PhotoPdfProgressActivity.java
+@@ -69,5 +69,13 @@
+             .setNegativeButton("Продолжить",null)
+             .setPositiveButton("Отменить создание",(d,w)->{PhotoPdfService.cancel(this,id);refresh();}).show();
+     }
+-    private void openResult(){PhotoPdfStore.Job job=store.job(id);if(job!=null&&PhotoPdfStore.DONE.equals(job.state)&&!job.result.isEmpty())PhotoPdfResultActivity.open(this,Uri.parse(job.result),job.folder);}
++    private void openResult(){
++        PhotoPdfStore.Job job=store.job(id);
++        if(job!=null&&PhotoPdfStore.DONE.equals(job.state)&&!job.result.isEmpty()){
++            PhotoPdfResultActivity.open(this,Uri.parse(job.result),job.folder);
++            // This screen may have been opened from a notification. Never leave
++            // a completed progress activity behind the document viewer.
++            finish();
++        }
++    }
+ }
+--- a/tests/release195/check.py
++++ b/tests/release195/check.py
+@@ -10,8 +10,8 @@
+ class Release195(unittest.TestCase):
+     def test_version(self):
+         conf=(ROOT/'apk/apktool.yml').read_text()
+-        self.assertIn("versionCode: '2103106'",conf)
+-        self.assertIn('versionName: 19.5',conf)
++        self.assertIn("versionCode: '2103107'",conf)
++        self.assertIn('versionName: 19.6',conf)
+     def test_pdf_editor_integrated_save(self):
+         content=read('PdfEditorActivity.java')
+         self.assertNotIn('ACTION_CREATE_DOCUMENT',content)
+--- /dev/null
++++ b/tests/release196/check.py
+@@ -0,0 +1,50 @@
++"""Regression checks for the PDF completion screen's Back stack."""
++import pathlib
++import unittest
++
++ROOT = pathlib.Path(__file__).resolve().parents[2]
++SRC = ROOT / 'src/com/umedjon/filemanager'
++
++
++class Release196(unittest.TestCase):
++    def test_version_increments_from_public_195(self):
++        config = (ROOT / 'apk/apktool.yml').read_text()
++        self.assertIn("versionCode: '2103107'", config)
++        self.assertIn('versionName: 19.6', config)
++
++    def test_dialog_dismisses_only_after_successful_launch(self):
++        source = (SRC / 'PhotoPdfProgressDialog.java').read_text()
++        start = source.index('dialog.getButton(-1).setOnClickListener')
++        end = source.index('refresher[0].run()', start)
++        handler = source[start:end]
++        self.assertIn('PhotoPdfStore.DONE.equals(job.state)', handler)
++        self.assertIn('!job.result.isEmpty()', handler)
++        launch = handler.index('PhotoPdfResultActivity.open(owner,Uri.parse(job.result),job.folder)')
++        dismiss = handler.index('dialog.dismiss()')
++        self.assertLess(launch, dismiss)
++        self.assertEqual(handler.count('dialog.dismiss()'), 1)
++
++    def test_dismiss_stops_polling_and_finishes_original_host(self):
++        source = (SRC / 'PhotoPdfProgressDialog.java').read_text()
++        host = (SRC / 'PhotoPdfActivity.java').read_text()
++        self.assertIn('handler.removeCallbacks(refresher[0])', source)
++        self.assertIn('if(onHide!=null)onHide.run()', source)
++        self.assertIn('PhotoPdfProgressDialog.show(this,queuedJob,this::finish)', host)
++
++    def test_notification_progress_screen_does_not_remain_on_stack(self):
++        source = (SRC / 'PhotoPdfProgressActivity.java').read_text()
++        action = source[source.index('private void openResult()'):]
++        self.assertIn('PhotoPdfResultActivity.open(this,Uri.parse(job.result),job.folder)', action)
++        self.assertIn('finish()', action)
++        self.assertLess(action.index('PhotoPdfResultActivity.open('), action.index('finish()'))
++
++    def test_hide_and_background_queue_are_unchanged(self):
++        source = (SRC / 'PhotoPdfProgressDialog.java').read_text()
++        self.assertIn('setNegativeButton("Скрыть",(d,w)->{})', source)
++        self.assertIn('PhotoPdfService.cancel(owner,id)', source)
++        service = (SRC / 'PhotoPdfService.java').read_text()
++        self.assertIn('class PhotoPdfService', service)
++
++
++if __name__ == '__main__':
++    unittest.main(verbosity=2)
