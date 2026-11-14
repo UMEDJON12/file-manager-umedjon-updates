@@ -6,7 +6,13 @@
  
  on:
    workflow_dispatch:
-@@ -31,16 +31,18 @@
+@@ -27,20 +27,24 @@
+ 
+       - name: Android build tools
+         uses: android-actions/setup-android@v3
++        with:
++          packages: platform-tools
+ 
        - name: Install APK inspection tools
          run: sdkmanager 'build-tools;35.0.0'
  
