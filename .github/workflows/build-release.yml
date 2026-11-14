@@ -125,15 +125,26 @@ jobs:
                 'releaseUrl':f'https://github.com/{repo}/releases/tag/{tag}'}
           out.write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n')
           PY
-          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft >/dev/null 2>&1; then
-            test "$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = true
-            gh release upload "$RELEASE_TAG" "$APK" "$SOURCE" "$RUNNER_TEMP/update.json" --repo "$GITHUB_REPOSITORY" --clobber
+          # Drafts created in the web UI may be addressable by release ID
+          # before the eventual Git tag exists; do not use /releases/tags here.
+          RELEASES_JSON="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100")"
+          DRAFT_ID="$(printf '%s' "$RELEASES_JSON" | jq -r --arg tag "$RELEASE_TAG" '[.[] | select(.draft == true and .tag_name == $tag) | .id][0] // empty')"
+          if test -n "$DRAFT_ID"; then
+            echo "Existing draft detected by release ID; preserving user-tested assets."
           else
+            echo "No existing draft found; creating one from the main branch."
             gh release create "$RELEASE_TAG" "$APK" "$SOURCE" "$RUNNER_TEMP/update.json" \
-              --repo "$GITHUB_REPOSITORY" --draft --target "$GITHUB_SHA" \
+              --repo "$GITHUB_REPOSITORY" --draft --target main \
               --title 'Файловый менеджер UMEDJON 19.5 — тестовая сборка' \
               --notes 'Новые страницы PDF с описаниями; улучшение порядка скринридера; встроенное сохранение PDF; всплывающий прогресс. Требуется проверка на устройстве.'
+            RELEASES_JSON="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100")"
+            DRAFT_ID="$(printf '%s' "$RELEASES_JSON" | jq -r --arg tag "$RELEASE_TAG" '[.[] | select(.draft == true and .tag_name == $tag) | .id][0] // empty')"
           fi
-          test "$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq '.draft')" = true
-          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json name,isDraft,assets,url \
-            --jq '{isDraft: .isDraft, url: .url, assets: [.assets[].name]}'
+          test -n "$DRAFT_ID"
+          RELEASE_JSON="$(gh api "repos/${GITHUB_REPOSITORY}/releases/${DRAFT_ID}")"
+          printf '%s' "$RELEASE_JSON" | jq -e '.draft == true'
+          for asset in "$APK" "$SOURCE" "$RUNNER_TEMP/update.json"; do
+            asset_name="$(basename "$asset")"
+            printf '%s' "$RELEASE_JSON" | jq -e --arg name "$asset_name" '[.assets[].name] | index($name) != null'
+          done
+          printf '%s' "$RELEASE_JSON" | jq '{draft, tag_name, html_url, assets: [.assets[].name]}'
