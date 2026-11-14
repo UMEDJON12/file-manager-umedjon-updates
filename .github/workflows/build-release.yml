@@ -25,11 +25,20 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Android build tools
-        uses: android-actions/setup-android@v3
-
-      - name: Install APK inspection tools
-        run: sdkmanager 'build-tools;35.0.0'
+      - name: Ensure APK inspection tools are available
+        run: |
+          set -euo pipefail
+          if test -x "$ANDROID_HOME/build-tools/35.0.0/aapt"; then
+            echo "Preinstalled Android build-tools 35.0.0 found."
+          else
+            SDK_MANAGER="$(command -v sdkmanager || true)"
+            if test -z "$SDK_MANAGER"; then
+              SDK_MANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -path '*/bin/sdkmanager' -print -quit)"
+            fi
+            test -n "$SDK_MANAGER"
+            "$SDK_MANAGER" 'build-tools;35.0.0'
+          fi
+          test -x "$ANDROID_HOME/build-tools/35.0.0/aapt"
 
       - name: Restore complete sources from versioned repository chunks
         run: |
