@@ -111,17 +111,34 @@
                  'releaseUrl':f'https://github.com/{repo}/releases/tag/{tag}'}
            out.write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n')
            PY
-@@ -122,8 +137,8 @@
-           else
+@@ -119,12 +136,18 @@
+-          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft >/dev/null 2>&1; then
+-            test "$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = true
+-            gh release upload "$RELEASE_TAG" "$APK" "$SOURCE" "$RUNNER_TEMP/update.json" --repo "$GITHUB_REPOSITORY" --clobber
+-          else
++          RELEASE_ID="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
++            --jq ".[] | select(.tag_name == \"${RELEASE_TAG}\") | .id" | head -n 1)"
++          if [ -z "$RELEASE_ID" ]; then
              gh release create "$RELEASE_TAG" "$APK" "$SOURCE" "$RUNNER_TEMP/update.json" \
                --repo "$GITHUB_REPOSITORY" --draft --target "$GITHUB_SHA" \
 -              --title 'Файловый менеджер UMEDJON 19.5 — тестовая сборка' \
 -              --notes 'Новые страницы PDF с описаниями; улучшение порядка скринридера; встроенное сохранение PDF; всплывающий прогресс. Требуется проверка на устройстве.'
 +              --title 'Файловый менеджер UMEDJON — версия 19.6' \
 +              --notes 'Исправлен возврат после открытия созданного PDF: окно завершения больше не появляется повторно.'
++            RELEASE_ID="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
++              --jq ".[] | select(.tag_name == \"${RELEASE_TAG}\") | .id" | head -n 1)"
            fi
-           test "$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq '.draft')" = true
-           gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json name,isDraft,assets,url \
+-          test "$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq '.draft')" = true
+-          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json name,isDraft,assets,url \
+-            --jq '{isDraft: .isDraft, url: .url, assets: [.assets[].name]}'
++          test -n "$RELEASE_ID"
++          test "$(gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" --jq '.draft')" = true
++          ASSETS="$(gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" --jq '.assets[].name')"
++          printf '%s\n' "$ASSETS" | grep -Fxq 'File-Manager-UMEDJON-19.6.apk'
++          printf '%s\n' "$ASSETS" | grep -Fxq 'File-Manager-UMEDJON-19.6-Source.zip'
++          printf '%s\n' "$ASSETS" | grep -Fxq 'update.json'
++          gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
++            --jq '{draft: .draft, url: .html_url, assets: [.assets[].name]}'
 --- a/BUILD-RESULT.json
 +++ b/BUILD-RESULT.json
 @@ -1,25 +1,21 @@
