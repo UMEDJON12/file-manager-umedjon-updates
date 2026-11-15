@@ -346,7 +346,7 @@
 +</manifest>
 --- a/tests/emulator198/WidgetInstrumentation.java
 +++ b/tests/emulator198/WidgetInstrumentation.java
-@@ -0,0 +1,172 @@
+@@ -0,0 +1,175 @@
 +package com.umedjon.filemanager.test;
 +
 +import android.app.Activity;
@@ -443,9 +443,12 @@
 +   return p!=null&&p.getState()==PlaybackState.STATE_PLAYING;
 +  },15000);
 +  controller().getTransportControls().seekTo(120000);
-+  waitFor("seek reaches middle of track",()->{
-+   PlaybackState s=controller().getPlaybackState();return s!=null&&s.getPosition()>=119000;
-+  },5000);
++  // The real Android media engine briefly reports BUFFERING when seeking.
++  // Wait for it to resume, not merely for the seek timestamp to be published.
++  waitFor("seek completes and real playback resumes",()->{
++   PlaybackState s=controller().getPlaybackState();
++   return s!=null&&s.getState()==PlaybackState.STATE_PLAYING&&s.getPosition()>=119000;
++  },12000);
 + }
 + private PendingIntent widgetDestination()throws Exception{
 +  Class<?> type=Class.forName("com.umedjon.filemanager.PlayerWidget");
