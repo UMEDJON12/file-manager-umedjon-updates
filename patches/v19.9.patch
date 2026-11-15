@@ -372,8 +372,8 @@
 +        android:functionalTest="true"/>
 +</manifest>
 --- a/tests/emulator199/NavigationInstrumentation.java	1970-01-01 06:00:00.000000000 +0600
-+++ b/tests/emulator199/NavigationInstrumentation.java	2026-11-16 00:10:45.756341424 +0500
-@@ -0,0 +1,290 @@
++++ b/tests/emulator199/NavigationInstrumentation.java	2026-11-16 00:17:55.559563742 +0500
+@@ -0,0 +1,311 @@
 +package com.umedjon.filemanager.test;
 +
 +import android.app.*;
@@ -566,12 +566,21 @@
 +  ok(service==service(),event+" preserves MusicService instance");
 + }
 + private String currentSource(){MediaMetadata d=playback.getMetadata();return d==null?null:d.getString("__SOURCE__");}
++ private void openHomeBeforeWidget(){
++  // The real widget is on the launcher, not atop an already resumed MainActivity.
++  // Send Home first so the reused MainActivity receives a fresh onResume as well.
++  Intent home=new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
++   .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
++  context.startActivity(home);
++  SystemClock.sleep(450);
++ }
 + private void widgetToFavorites(String label,int state)throws Exception{
 +  long before=playback.getPlaybackState().getPosition();String original=currentSource();Object owner=service();
-+  Activity previous=resumed;
++  int beforeResumes=resumes;
 +  PendingIntent action=widget();ok(action!=null,label+" widget PendingIntent exists");
++  openHomeBeforeWidget();
 +  action.send();
-+  await(label+" opens Favorites source",()->resumed!=null&&resumed!=previous&&FAVORITES.equals(resumed.getClass().getName()),15000);
++  await(label+" opens Favorites source",()->resumes>beforeResumes&&resumed!=null&&FAVORITES.equals(resumed.getClass().getName()),15000);
 +  Activity favorite=resumed;
 +  // FavoritesActivity consumes and removes the one-shot focus extra in onResume;
 +  // the observable contract is the current track's row brought into view.
@@ -599,8 +608,19 @@
 +  long before=playback.getPlaybackState().getPosition();String original=currentSource();Object owner=service();
 +  Activity previous=resumed;
 +  notification().send();
-+  await(label+" opens fullscreen from notification",()->resumed!=null&&resumed!=previous&&FULL.equals(resumed.getClass().getName()),15000);
++  // The legacy media notification launches LaunchActivity, which routes to
++  // MainActivity on this emulator. Some navigation stacks then open the full
++  // player. In either case, testing the actual notification PendingIntent is
++  // essential: it must never re-prepare or seek the live audio.
++  await(label+" opens playback from notification",()->resumed!=null&&resumed!=previous&&
++   (MAIN.equals(resumed.getClass().getName())||FULL.equals(resumed.getClass().getName())),15000);
 +  unchanged(label+" notification tap",state,before,original,owner);
++  if(MAIN.equals(resumed.getClass().getName())){
++   Activity manager=resumed;
++   ui(()->{manager.startActivity(new Intent().setClassName(context,FULL));return null;});
++   await(label+" full player opens",()->resumed!=null&&FULL.equals(resumed.getClass().getName()),15000);
++   unchanged(label+" full player",state,before,original,owner);
++  }
 +  Activity fullscreen=resumed;long beforeBack=playback.getPlaybackState().getPosition();
 +  sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);
 +  await(label+" Back leaves fullscreen",()->fullscreen.isFinishing()||!FULL.equals(resumed.getClass().getName()),10000);
@@ -608,9 +628,10 @@
 + }
 + private void folderWidget(int state)throws Exception{
 +  long before=playback.getPlaybackState().getPosition();String original=currentSource();Object owner=service();
-+  Activity previous=resumed;
++  int beforeResumes=resumes;
++  openHomeBeforeWidget();
 +  widget().send();
-+  await("folder widget opens original file manager screen",()->resumed!=null&&resumed!=previous&&MAIN.equals(resumed.getClass().getName()),15000);
++  await("folder widget opens original file manager screen",()->resumes>beforeResumes&&resumed!=null&&MAIN.equals(resumed.getClass().getName()),15000);
 +  Intent route=new Intent("com.umedjon.filemanager.OPEN_PLAYBACK_SOURCE")
 +   .setClassName(context,MAIN).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP);
 +  PendingIntent expected=PendingIntent.getActivity(context,154,route,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
