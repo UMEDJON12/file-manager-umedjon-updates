@@ -733,7 +733,7 @@
 +</manifest>
 --- /dev/null
 +++ b/tests/emulator197/FavoritesInstrumentation.java
-@@ -0,0 +1,269 @@
+@@ -0,0 +1,270 @@
 +package com.umedjon.filemanager.test;
 +
 +import android.app.Activity;
