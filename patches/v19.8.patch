@@ -1,0 +1,574 @@
+--- a/.github/workflows/build-release.yml
++++ b/.github/workflows/build-release.yml
+@@ -1,4 +1,4 @@
+-name: Build, emulate and draft UMEDJON 19.7
++name: Build, emulate and draft UMEDJON 19.8
+ 
+ on:
+   workflow_dispatch:
+@@ -33,13 +33,14 @@
+       - name: Install APK inspection tools
+         run: sdkmanager 'build-tools;35.0.0'
+ 
+-      - name: Restore verified 19.5 sources and apply the 19.6 + 19.7 patches
++      - name: Restore verified 19.5 sources and apply the 19.6–19.8 patches
+         run: |
+           set -euo pipefail
+           test -d sources/v19.5
+           test -f sources/v19.5/SHA256SUMS
+           test -f patches/v19.6.patch
+           test -f patches/v19.7.patch
++          test -f patches/v19.8.patch
+           (cd sources/v19.5 && sha256sum -c SHA256SUMS)
+           cat sources/v19.5/source.part-* > "$RUNNER_TEMP/File-Manager-UMEDJON-19.5-Source.zip"
+           unzip -tq "$RUNNER_TEMP/File-Manager-UMEDJON-19.5-Source.zip"
+@@ -47,6 +48,7 @@
+           test -f "$RUNNER_TEMP/project/UMEDJON-Source/scripts/build.py"
+           (cd "$RUNNER_TEMP/project/UMEDJON-Source" && patch --batch --forward -p1 < "$GITHUB_WORKSPACE/patches/v19.6.patch")
+           (cd "$RUNNER_TEMP/project/UMEDJON-Source" && patch --batch --forward -p1 < "$GITHUB_WORKSPACE/patches/v19.7.patch")
++          (cd "$RUNNER_TEMP/project/UMEDJON-Source" && patch --batch --forward -p1 < "$GITHUB_WORKSPACE/patches/v19.8.patch")
+           test ! -e "$RUNNER_TEMP/project/UMEDJON-Source/keys/signing.json"
+           test ! -e "$RUNNER_TEMP/project/UMEDJON-Source/keys/umedjon.jks"
+ 
+@@ -57,6 +59,7 @@
+           python3 -m unittest discover -s tests/release195 -p check.py -v
+           python3 -m unittest discover -s tests/release196 -p check.py -v
+           python3 -m unittest discover -s tests/release197 -p check.py -v
++          python3 -m unittest discover -s tests/release198 -p check.py -v
+ 
+       - name: Restore the original signing key from Secrets
+         env:
+@@ -80,19 +83,19 @@
+           set -euo pipefail
+           cd "$RUNNER_TEMP/project/UMEDJON-Source"
+           python3 scripts/build.py
+-          test -s output/File-Manager-UMEDJON-19.7.apk
++          test -s output/File-Manager-UMEDJON-19.8.apk
+ 
+       - name: Verify package, version, signer and SHA-256
+         run: |
+           set -euo pipefail
+-          APK="$RUNNER_TEMP/project/UMEDJON-Source/output/File-Manager-UMEDJON-19.7.apk"
++          APK="$RUNNER_TEMP/project/UMEDJON-Source/output/File-Manager-UMEDJON-19.8.apk"
+           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" > "$RUNNER_TEMP/badging.txt"
+           python3 - <<'PY'
+           import pathlib,re,os
+           text=(pathlib.Path(os.environ['RUNNER_TEMP'])/'badging.txt').read_text()
+           match=re.search(r"^package: name='([^']+)' versionCode='([^']+)' versionName='([^']+)'",text,re.M)
+           assert match, 'Unable to read APK package identity'
+-          assert match.groups()==('com.umedjon.filemanager','2103108','19.7'),match.groups()
++          assert match.groups()==('com.umedjon.filemanager','2103109','19.8'),match.groups()
+           PY
+           java -jar "$RUNNER_TEMP/project/UMEDJON-Source/toolchain/sdk/android-15/lib/apksigner.jar" verify --verbose "$APK"
+           sha256sum "$APK"
+@@ -100,8 +103,8 @@
+       - name: Upload verified APK as workflow artifact
+         uses: actions/upload-artifact@v4
+         with:
+-          name: File-Manager-UMEDJON-19.7-signed
+-          path: ${{ runner.temp }}/project/UMEDJON-Source/output/File-Manager-UMEDJON-19.7.apk
++          name: File-Manager-UMEDJON-19.8-signed
++          path: ${{ runner.temp }}/project/UMEDJON-Source/output/File-Manager-UMEDJON-19.8.apk
+           if-no-files-found: error
+ 
+       - name: Enable KVM for Android Emulator
+@@ -125,22 +128,22 @@
+           emulator-boot-timeout: 600
+           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-boot-anim
+           disable-animations: true
+-          script: bash "$RUNNER_TEMP/project/UMEDJON-Source/scripts/emulator-test-197.sh"
++          script: bash "$RUNNER_TEMP/project/UMEDJON-Source/scripts/emulator-test-198.sh"
+ 
+       - name: Upload Android Emulator logs and accessibility screenshot
+         if: always()
+         uses: actions/upload-artifact@v4
+         with:
+-          name: File-Manager-UMEDJON-19.7-Emulator-Report
+-          path: ${{ runner.temp }}/umedjon-emulator-197/logs
++          name: File-Manager-UMEDJON-19.8-Emulator-Report
++          path: ${{ runner.temp }}/umedjon-emulator-198/logs
+           if-no-files-found: warn
+ 
+-      - name: Package complete public 19.7 sources without private keys
++      - name: Package complete public 19.8 sources without private keys
+         run: |
+           set -euo pipefail
+           cd "$RUNNER_TEMP/project/UMEDJON-Source"
+           python3 scripts/package-release195.py --public-only
+-          SOURCE="$RUNNER_TEMP/deliverables/File-Manager-UMEDJON-19.7-Source.zip"
++          SOURCE="$RUNNER_TEMP/deliverables/File-Manager-UMEDJON-19.8-Source.zip"
+           unzip -tq "$SOURCE"
+           if unzip -Z -1 "$SOURCE" | grep -E '^UMEDJON-Source/keys/'; then
+             echo 'Signing material detected in public ZIP' >&2
+@@ -150,21 +153,21 @@
+       - name: Create an unpublished draft only after Android Emulator passes
+         env:
+           GH_TOKEN: ${{ github.token }}
+-          RELEASE_TAG: v19.7
++          RELEASE_TAG: v19.8
+         run: |
+           set -euo pipefail
+-          test -f "$RUNNER_TEMP/umedjon-emulator-197/logs/emulator-ok"
+-          APK="$RUNNER_TEMP/project/UMEDJON-Source/output/File-Manager-UMEDJON-19.7.apk"
+-          SOURCE="$RUNNER_TEMP/deliverables/File-Manager-UMEDJON-19.7-Source.zip"
++          test -f "$RUNNER_TEMP/umedjon-emulator-198/logs/emulator-ok"
++          APK="$RUNNER_TEMP/project/UMEDJON-Source/output/File-Manager-UMEDJON-19.8.apk"
++          SOURCE="$RUNNER_TEMP/deliverables/File-Manager-UMEDJON-19.8-Source.zip"
+           python3 - <<'PY'
+           import hashlib,json,os,pathlib
+           tag=os.environ['RELEASE_TAG'];repo=os.environ['GITHUB_REPOSITORY']
+-          apk=pathlib.Path(os.environ['RUNNER_TEMP'])/'project/UMEDJON-Source/output/File-Manager-UMEDJON-19.7.apk'
++          apk=pathlib.Path(os.environ['RUNNER_TEMP'])/'project/UMEDJON-Source/output/File-Manager-UMEDJON-19.8.apk'
+           out=pathlib.Path(os.environ['RUNNER_TEMP'])/'update.json'
+-          data={'versionName':'19.7','versionCode':2103108,
++          data={'versionName':'19.8','versionCode':2103109,
+                 'apkUrl':f'https://github.com/{repo}/releases/download/{tag}/{apk.name}',
+                 'sha256':hashlib.sha256(apk.read_bytes()).hexdigest(),
+-                'notes':'Исправлено отображение воспроизводимого трека в избранном. Плеер остаётся в уведомлениях после окончания очереди.',
++                'notes':'Исправлен сброс позиции музыки при открытии плеера через виджет.',
+                 'releaseUrl':f'https://github.com/{repo}/releases/tag/{tag}'}
+           out.write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n')
+           PY
+@@ -173,16 +176,16 @@
+           if [ -z "$RELEASE_ID" ]; then
+             gh release create "$RELEASE_TAG" "$APK" "$SOURCE" "$RUNNER_TEMP/update.json" \
+               --repo "$GITHUB_REPOSITORY" --draft --target "$GITHUB_SHA" \
+-              --title 'Файловый менеджер UMEDJON — версия 19.7' \
+-              --notes 'Исправлено отображение воспроизводимого трека в избранном. Плеер остаётся в уведомлениях после окончания очереди.'
++              --title 'Файловый менеджер UMEDJON — версия 19.8' \
++              --notes 'Исправлен сброс позиции музыки при открытии плеера через виджет.'
+             RELEASE_ID="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+               --jq ".[] | select(.tag_name == \"${RELEASE_TAG}\") | .id" | head -n 1)"
+           fi
+           test -n "$RELEASE_ID"
+           test "$(gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" --jq '.draft')" = true
+           ASSETS="$(gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" --jq '.assets[].name')"
+-          printf '%s\n' "$ASSETS" | grep -Fxq 'File-Manager-UMEDJON-19.7.apk'
+-          printf '%s\n' "$ASSETS" | grep -Fxq 'File-Manager-UMEDJON-19.7-Source.zip'
++          printf '%s\n' "$ASSETS" | grep -Fxq 'File-Manager-UMEDJON-19.8.apk'
++          printf '%s\n' "$ASSETS" | grep -Fxq 'File-Manager-UMEDJON-19.8-Source.zip'
+           printf '%s\n' "$ASSETS" | grep -Fxq 'update.json'
+           gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
+             --jq '{draft: .draft, url: .html_url, assets: [.assets[].name]}'
+--- a/apk/apktool.yml
++++ b/apk/apktool.yml
+@@ -9,8 +9,8 @@
+ packageInfo:
+   forcedPackageId: 127
+ versionInfo:
+-  versionCode: '2103108'
+-  versionName: 19.7
++  versionCode: '2103109'
++  versionName: 19.8
+ doNotCompress:
+ - arsc
+ - dex
+--- a/src/com/umedjon/filemanager/PlayerWidget.java
++++ b/src/com/umedjon/filemanager/PlayerWidget.java
+@@ -2,6 +2,14 @@
+ import android.app.*;import android.appwidget.*;import android.content.*;import android.graphics.Bitmap;import android.os.*;import android.media.session.*;import android.widget.*;
+ public final class PlayerWidget extends AppWidgetProvider {
+  static String lastSnapshot;
++ /** Opening the widget's art/title must only navigate to the existing player UI.
++  * Going through MainActivity's playback-source navigation reselects a folder
++  * or favorite and may issue a new playback request, resetting the seek position. */
++ static PendingIntent openPlayer(Context c){
++  Intent open=new Intent().setClassName(c,"com.alphainventor.filemanager.musicplayer.FullScreenPlayerActivity")
++   .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP);
++  return PendingIntent.getActivity(c,154,open,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
++ }
+  public void onReceive(Context c,Intent i){if(i!=null&&Repeat.ACTION.equals(i.getAction())){try{Repeat.cycle(c);}catch(Exception e){Bridge.error(c,e);}return;}super.onReceive(c,i);}
+  public void onUpdate(Context c,AppWidgetManager m,int[] ids){lastSnapshot=null;update(c);}
+  public static void update(Context c){
+@@ -10,11 +18,10 @@
+   boolean playing=Playback.controller!=null&&Playback.controller.getPlaybackState()!=null&&Playback.controller.getPlaybackState().getState()==PlaybackState.STATE_PLAYING;
+   int repeat=Repeat.mode(c);String snapshot=java.util.Arrays.toString(ids)+title+playing+prefs.getString("uri","")+Artwork.generation+":"+repeat;if(snapshot.equals(lastSnapshot))return;
+   RemoteViews v=new RemoteViews(c.getPackageName(),Bridge.res(c,"layout","umedjon_player_widget"));v.setTextViewText(Bridge.res(c,"id","umedjon_widget_title"),title);
+-  Intent open=new Intent(Navigation.ACTION).setClassName(c,"com.alphainventor.filemanager.activity.MainActivity").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP);
+-  PendingIntent destination=PendingIntent.getActivity(c,154,open,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
++  PendingIntent destination=openPlayer(c);
+   int cover=Bridge.res(c,"id","umedjon_widget_art");Bitmap bitmap=Artwork.get(c);if(bitmap==null)v.setImageViewResource(cover,Bridge.res(c,"drawable","umedjon_music_note"));else v.setImageViewBitmap(cover,bitmap);
+-  v.setOnClickPendingIntent(cover,destination);v.setContentDescription(cover,(bitmap==null?"Музыка. ":"Обложка трека. ")+title+". Открыть список воспроизведения");
+-  int label=Bridge.res(c,"id","umedjon_widget_title");v.setOnClickPendingIntent(label,destination);v.setContentDescription(label,title+". Открыть список воспроизведения");
++  v.setOnClickPendingIntent(cover,destination);v.setContentDescription(cover,(bitmap==null?"Музыка. ":"Обложка трека. ")+title+". Открыть плеер");
++  int label=Bridge.res(c,"id","umedjon_widget_title");v.setOnClickPendingIntent(label,destination);v.setContentDescription(label,title+". Открыть плеер");
+   String[] names={"previous","toggle","next"};String[] labels={"Предыдущий трек",playing?"Пауза":"Воспроизведение","Следующий трек"};
+   for(int i=0;i<names.length;i++){int id=Bridge.res(c,"id","umedjon_widget_"+names[i]);Intent intent=new Intent("com.umedjon.filemanager.player."+names[i]).setClassName(c,"com.example.android.uamp.MusicService").putExtra("START_FOREGROUND",true);PendingIntent p=Build.VERSION.SDK_INT>=26?PendingIntent.getForegroundService(c,150+i,intent,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE):PendingIntent.getService(c,150+i,intent,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);v.setOnClickPendingIntent(id,p);v.setContentDescription(id,labels[i]);}
+   int repeatId=Bridge.res(c,"id","umedjon_widget_repeat");v.setOnClickPendingIntent(repeatId,PendingIntent.getBroadcast(c,153,new Intent(Repeat.ACTION).setClass(c,PlayerWidget.class),PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE));v.setContentDescription(repeatId,Repeat.label(repeat));v.setImageViewResource(repeatId,Bridge.res(c,"drawable",Repeat.icon(repeat)));v.setInt(repeatId,"setImageAlpha",repeat==0?110:255);
+--- a/tests/release195/check.py
++++ b/tests/release195/check.py
+@@ -10,8 +10,8 @@
+ class Release195(unittest.TestCase):
+     def test_version(self):
+         conf=(ROOT/'apk/apktool.yml').read_text()
+-        self.assertIn("versionCode: '2103108'",conf)
+-        self.assertIn('versionName: 19.7',conf)
++        self.assertIn("versionCode: '2103109'",conf)
++        self.assertIn('versionName: 19.8',conf)
+     def test_pdf_editor_integrated_save(self):
+         content=read('PdfEditorActivity.java')
+         self.assertNotIn('ACTION_CREATE_DOCUMENT',content)
+--- a/tests/release196/check.py
++++ b/tests/release196/check.py
+@@ -9,8 +9,8 @@
+ class Release196(unittest.TestCase):
+     def test_version_increments_from_public_195(self):
+         config = (ROOT / 'apk/apktool.yml').read_text()
+-        self.assertIn("versionCode: '2103108'", config)
+-        self.assertIn('versionName: 19.7', config)
++        self.assertIn("versionCode: '2103109'", config)
++        self.assertIn('versionName: 19.8', config)
+ 
+     def test_dialog_dismisses_only_after_successful_launch(self):
+         source = (SRC / 'PhotoPdfProgressDialog.java').read_text()
+--- a/tests/release197/check.py
++++ b/tests/release197/check.py
+@@ -11,8 +11,8 @@
+ class Favorites197(unittest.TestCase):
+     def test_version(self):
+         data=(ROOT/"apk/apktool.yml").read_text()
+-        self.assertIn("versionCode: '2103108'",data)
+-        self.assertIn("versionName: 19.7",data)
++        self.assertIn("versionCode: '2103109'",data)
++        self.assertIn("versionName: 19.8",data)
+ 
+     def test_real_identity_not_title(self):
+         self.assertIn('sameSource(currentSource,track[0])',SOURCE)
+--- a/scripts/emulator-test-198.sh
++++ b/scripts/emulator-test-198.sh
+@@ -0,0 +1,90 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
++tool_dir="$RUNNER_TEMP/umedjon-emulator-198"
++mkdir -p "$tool_dir/classes" "$tool_dir/dex" "$tool_dir/logs"
++trap 'adb logcat -d -b main -b system -b crash > "$tool_dir/logs/logcat-on-exit.txt" 2>&1 || true' EXIT
++test_apk="$tool_dir/Release-Regression-Test.apk"
++signed_apk="$project_dir/output/File-Manager-UMEDJON-19.8.apk"
++android_jar="$ANDROID_HOME/platforms/android-35/android.jar"
++build_tools="$ANDROID_HOME/build-tools/35.0.0"
++
++test -e /dev/kvm
++test -r /dev/kvm
++test -w /dev/kvm
++test -f "$android_jar"
++test -s "$signed_apk"
++sha256sum "$signed_apk" | tee "$tool_dir/logs/tested-apk-sha256.txt"
++"$build_tools/apksigner" verify --verbose --print-certs "$signed_apk" | tee "$tool_dir/logs/signed-apk-verification.txt"
++grep -F '6259589d30dcf7fb984b1f973ed50c7e2a32372a0eb05c13efaa2cbac554a899' "$tool_dir/logs/signed-apk-verification.txt"
++
++javac -source 8 -target 8 -encoding UTF-8 -cp "$android_jar" -d "$tool_dir/classes" \
++  "$project_dir/tests/emulator197/FavoritesInstrumentation.java" \
++  "$project_dir/tests/emulator198/WidgetInstrumentation.java"
++jar cf "$tool_dir/instrumentation.jar" -C "$tool_dir/classes" .
++java -cp "$project_dir/toolchain/sdk/android-15/lib/d8.jar" com.android.tools.r8.D8 --min-api 21 --lib "$android_jar" --output "$tool_dir/dex" "$tool_dir/instrumentation.jar"
++"$build_tools/aapt2" link -I "$android_jar" --manifest "$project_dir/tests/emulator198/AndroidManifest.xml" -o "$tool_dir/test-unsigned.apk"
++python3 - "$tool_dir/test-unsigned.apk" "$tool_dir/dex/classes.dex" <<'PY'
++import sys,zipfile
++with zipfile.ZipFile(sys.argv[1],'a') as z:
++    z.write(sys.argv[2],'classes.dex',compress_type=zipfile.ZIP_DEFLATED)
++PY
++"$build_tools/zipalign" -f -p 4 "$tool_dir/test-unsigned.apk" "$tool_dir/test-aligned.apk"
++test -s "$RUNNER_TEMP/umedjon-original.jks"
++"$build_tools/apksigner" sign --ks "$RUNNER_TEMP/umedjon-original.jks" --ks-pass "pass:$UMEDJON_STORE_PASS" \
++  --key-pass "pass:$UMEDJON_KEY_PASS" --ks-key-alias "$UMEDJON_KEY_ALIAS" --out "$test_apk" "$tool_dir/test-aligned.apk"
++
++adb wait-for-device
++test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = 1
++adb shell getprop ro.build.version.sdk | tee "$tool_dir/logs/emulator-sdk.txt"
++adb shell getprop ro.product.cpu.abi | tee "$tool_dir/logs/emulator-abi.txt"
++adb shell settings put system font_scale 1.5
++
++mkdir -p "$tool_dir/previous"
++gh release download v19.6 --repo UMEDJON12/file-manager-umedjon-updates \
++  --pattern File-Manager-UMEDJON-19.6.apk --dir "$tool_dir/previous"
++previous_apk="$tool_dir/previous/File-Manager-UMEDJON-19.6.apk"
++echo 'dd1087b38cd0e8a74cadfe1d771de32d9a21a9be683c1943bcfc8089e09a0960  '"$previous_apk" | sha256sum -c -
++adb install "$previous_apk"
++adb shell pm grant com.umedjon.filemanager android.permission.POST_NOTIFICATIONS
++adb shell monkey -p com.umedjon.filemanager 1 | tee "$tool_dir/logs/start-196.txt"
++adb install "$test_apk"
++
++run_favorites() {
++  local mode="$1" output="$tool_dir/logs/favorites-$1.txt"
++  adb shell am instrument -w -r -e mode "$mode" \
++    com.umedjon.filemanager.test/com.umedjon.filemanager.test.FavoritesInstrumentation | tee "$output"
++  grep -F 'EMULATOR_TEST_PASS' "$output"
++  grep -F 'INSTRUMENTATION_CODE: -1' "$output"
++}
++run_widget() {
++  local mode="$1" output="$tool_dir/logs/widget-$1.txt"
++  adb shell am instrument -w -r -e mode "$mode" \
++    com.umedjon.filemanager.test/com.umedjon.filemanager.test.WidgetInstrumentation | tee "$output"
++  grep -F 'WIDGET_TEST_PASS' "$output"
++  grep -F 'INSTRUMENTATION_CODE: -1' "$output"
++}
++
++run_favorites seed
++adb shell am force-stop com.umedjon.filemanager
++adb install -r "$signed_apk" | tee "$tool_dir/logs/upgrade.txt"
++adb shell dumpsys package com.umedjon.filemanager | grep -m 1 'versionCode=2103109'
++adb shell monkey -p com.umedjon.filemanager 1 | tee "$tool_dir/logs/start-198.txt"
++run_favorites verify
++run_favorites queue_end
++run_widget widget
++adb shell am force-stop com.umedjon.filemanager
++run_widget restore
++adb shell uiautomator dump /sdcard/window.xml || true
++adb pull /sdcard/window.xml "$tool_dir/logs/window.xml" || true
++adb shell screencap -p /sdcard/umedjon-final.png || true
++adb pull /sdcard/umedjon-final.png "$tool_dir/logs/final.png" || true
++adb logcat -d -b main -b crash > "$tool_dir/logs/logcat.txt"
++if grep -En 'Process: com.umedjon.filemanager|ANR in com.umedjon.filemanager' "$tool_dir/logs/logcat.txt" > "$tool_dir/logs/crashes.txt"; then
++  echo 'Android runtime crash or ANR found; inspect crashes.txt' >&2
++  exit 1
++fi
++sha256sum -c "$tool_dir/logs/tested-apk-sha256.txt"
++echo 'ALL_EMULATOR_TESTS_PASSED'
++touch "$tool_dir/logs/emulator-ok"
+--- a/tests/emulator198/AndroidManifest.xml
++++ b/tests/emulator198/AndroidManifest.xml
+@@ -0,0 +1,14 @@
++<?xml version="1.0" encoding="utf-8"?>
++<manifest xmlns:android="http://schemas.android.com/apk/res/android"
++    package="com.umedjon.filemanager.test">
++    <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="28"/>
++    <application android:label="UMEDJON emulator regression tests"/>
++    <instrumentation
++        android:name="com.umedjon.filemanager.test.FavoritesInstrumentation"
++        android:targetPackage="com.umedjon.filemanager"
++        android:functionalTest="true"/>
++    <instrumentation
++        android:name="com.umedjon.filemanager.test.WidgetInstrumentation"
++        android:targetPackage="com.umedjon.filemanager"
++        android:functionalTest="true"/>
++</manifest>
+--- a/tests/emulator198/WidgetInstrumentation.java
++++ b/tests/emulator198/WidgetInstrumentation.java
+@@ -0,0 +1,172 @@
++package com.umedjon.filemanager.test;
++
++import android.app.Activity;
++import android.app.Instrumentation;
++import android.app.PendingIntent;
++import android.content.Context;
++import android.content.Intent;
++import android.media.MediaMetadata;
++import android.media.session.MediaController;
++import android.media.session.PlaybackState;
++import android.net.Uri;
++import android.os.Bundle;
++import android.os.SystemClock;
++import java.io.File;
++import java.io.FileOutputStream;
++import java.lang.reflect.Field;
++import java.lang.reflect.Method;
++import java.nio.ByteBuffer;
++import java.nio.ByteOrder;
++import java.util.concurrent.Callable;
++import java.util.concurrent.atomic.AtomicReference;
++
++/** Runs the real signed release's widget navigation against active audio. */
++public final class WidgetInstrumentation extends Instrumentation {
++ private static final String APP="com.umedjon.filemanager";
++ private static final String PLAYER="com.alphainventor.filemanager.musicplayer.FullScreenPlayerActivity";
++ private Context target;
++ private Activity source;
++ private int checks;
++
++ @Override public void onCreate(Bundle arguments){
++  super.onCreate(arguments);
++  new Thread(()->{
++   Bundle result=new Bundle();
++   try{
++    target=getTargetContext();
++    String mode=arguments==null?"widget":arguments.getString("mode","widget");
++    if("restore".equals(mode))verifyColdOpening();
++    else verifyWidgetScenarios();
++    result.putString("stream","WIDGET_TEST_PASS: "+checks+" assertions, mode="+mode);
++    finish(Activity.RESULT_OK,result);
++   }catch(Throwable failure){
++    android.util.Log.e("UMEDJON_WIDGET_TEST","WIDGET_TEST_FAILURE",failure);
++    result.putString("stream","WIDGET_TEST_FAILURE: "+failure);
++    finish(Activity.RESULT_CANCELED,result);
++   }
++  },"umedjon-widget-regression").start();
++ }
++ private void check(boolean ok,String message){checks++;if(!ok)throw new AssertionError(message);}
++ private <T> T ui(Callable<T> callable){
++  AtomicReference<T> value=new AtomicReference<>();AtomicReference<Throwable> error=new AtomicReference<>();
++  runOnMainSync(()->{try{value.set(callable.call());}catch(Throwable t){error.set(t);}});
++  if(error.get()!=null)throw new AssertionError(error.get());return value.get();
++ }
++ private void waitFor(String what,Callable<Boolean> condition,long ms){
++  long end=SystemClock.uptimeMillis()+ms;
++  while(SystemClock.uptimeMillis()<end){if(Boolean.TRUE.equals(ui(condition)))return;SystemClock.sleep(150);}
++  throw new AssertionError("Timeout: "+what);
++ }
++ private MediaController controller(){return source==null?null:source.getMediaController();}
++ private File audio(String name)throws Exception{
++  File file=new File(target.getFilesDir(),name);
++  int count=8000*280*2;
++  ByteBuffer head=ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN);
++  head.put(new byte[]{'R','I','F','F'}).putInt(36+count);
++  head.put(new byte[]{'W','A','V','E','f','m','t',' '}).putInt(16);
++  head.putShort((short)1).putShort((short)1).putInt(8000).putInt(16000);
++  head.putShort((short)2).putShort((short)16);
++  head.put(new byte[]{'d','a','t','a'}).putInt(count);
++  try(FileOutputStream out=new FileOutputStream(file)){
++   out.write(head.array());byte[] block=new byte[8192];
++   for(int remain=count;remain>0;remain-=Math.min(block.length,remain))out.write(block,0,Math.min(block.length,remain));
++  }
++  return file;
++ }
++ private Activity launchSource(){
++  Activity a=startActivitySync(new Intent(Intent.ACTION_MAIN)
++   .setClassName(target,"com.umedjon.filemanager.FavoritesActivity")
++   .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
++  source=a;waitFor("connected media controller",()->controller()!=null,15000);
++  return a;
++ }
++ private void queue(File file,String origin)throws Exception{
++  Intent i=new Intent("com.umedjon.filemanager.player.queue")
++   .setClassName(target,"com.example.android.uamp.MusicService");
++  i.putExtra("uris",new String[]{Uri.fromFile(file).toString()});
++  i.putExtra("ids",new String[]{origin+"-widget-track"});
++  i.putExtra("index",0).putExtra("origin",origin)
++   .putExtra("folder",target.getFilesDir().getAbsolutePath())
++   .putExtra("START_FOREGROUND",true);
++  target.startForegroundService(i);
++  waitFor("real "+origin+" playback",()->{
++   MediaController c=controller();PlaybackState p=c==null?null:c.getPlaybackState();
++   return p!=null&&p.getState()==PlaybackState.STATE_PLAYING;
++  },15000);
++  controller().getTransportControls().seekTo(120000);
++  waitFor("seek reaches middle of track",()->{
++   PlaybackState s=controller().getPlaybackState();return s!=null&&s.getPosition()>=119000;
++  },5000);
++ }
++ private PendingIntent widgetDestination()throws Exception{
++  Class<?> type=Class.forName("com.umedjon.filemanager.PlayerWidget");
++  Method method=type.getDeclaredMethod("openPlayer",Context.class);method.setAccessible(true);
++  return (PendingIntent)method.invoke(null,target);
++ }
++ private Object playerInstance()throws Exception{
++  Class<?> type=Class.forName("com.umedjon.filemanager.Playback");
++  Field f=type.getDeclaredField("service");f.setAccessible(true);return f.get(null);
++ }
++ private void verifyUnchanged(PendingIntent action,int state,String label)throws Exception{
++  MediaController c=controller();PlaybackState before=c.getPlaybackState();
++  MediaMetadata metadata=c.getMetadata();
++  check(before!=null&&before.getPosition()>=119000,"before widget "+label+" position is nonzero");
++  check(before.getState()==state,"before widget "+label+" play/pause state");
++  Object engine=playerInstance();String original=metadata.getString("__SOURCE__");
++  check(original!=null,"source URI before widget "+label);
++  long position=before.getPosition();long item=before.getActiveQueueItemId();
++  action.send();SystemClock.sleep(850);
++  PlaybackState after=c.getPlaybackState();MediaMetadata later=c.getMetadata();
++  check(after!=null&&after.getState()==state,"widget preserves "+label+" play/pause state");
++  check(after.getPosition()>=position-1200,"widget does not rewind "+label+" from "+position+" to "+after.getPosition());
++  check(after.getPosition()<=position+2500,"widget does not skip forward "+label);
++  check(item==after.getActiveQueueItemId(),"widget preserves queue item "+label);
++  check(original.equals(later.getString("__SOURCE__")),"widget preserves track source "+label);
++  check(engine==playerInstance(),"widget preserves playback service instance "+label);
++ }
++ private void verifyWidgetScenarios()throws Exception{
++  launchSource();PendingIntent action=widgetDestination();
++  check(action!=null,"widget cover has launch PendingIntent");
++  ActivityMonitor first=addMonitor(PLAYER,null,false);
++  queue(audio("widget-favorite.wav"),"favorites");
++  verifyUnchanged(action,PlaybackState.STATE_PLAYING,"favorites playing");
++  Activity opened=waitForMonitorWithTimeout(first,10000);
++  check(opened!=null&&PLAYER.equals(opened.getClass().getName()),"widget opens full screen player, not folder");
++  verifyUnchanged(action,PlaybackState.STATE_PLAYING,"repeat tap one");
++  verifyUnchanged(action,PlaybackState.STATE_PLAYING,"repeat tap two");
++  controller().getTransportControls().pause();
++  waitFor("paused",()->controller().getPlaybackState().getState()==PlaybackState.STATE_PAUSED,5000);
++  verifyUnchanged(action,PlaybackState.STATE_PAUSED,"favorites paused");
++  queue(audio("widget-folder.wav"),"folder");
++  verifyUnchanged(action,PlaybackState.STATE_PLAYING,"folder playing");
++  controller().getTransportControls().pause();
++  waitFor("folder paused",()->controller().getPlaybackState().getState()==PlaybackState.STATE_PAUSED,5000);
++  verifyUnchanged(action,PlaybackState.STATE_PAUSED,"folder paused");
++  // Save a paused position to verify that a cold app opening never autoplays.
++  target.getSharedPreferences("umedjon_widget_probe",0).edit()
++   .putLong("paused_position",controller().getPlaybackState().getPosition()).commit();
++  ui(()->{opened.finish();source.finish();return null;});
++ }
++ private void verifyColdOpening()throws Exception{
++  long saved=target.getSharedPreferences("umedjon_widget_probe",0).getLong("paused_position",0);
++  check(saved>=119000,"pause position persisted before cold start");
++  PendingIntent destination=widgetDestination();
++  ActivityMonitor monitor=addMonitor(PLAYER,null,false);
++  destination.send();
++  Activity opened=waitForMonitorWithTimeout(monitor,15000);
++  check(opened!=null,"cold widget tap opens full player");
++  SystemClock.sleep(2000);
++  Class<?> playback=Class.forName("com.umedjon.filemanager.Playback");
++  Method prefs=playback.getDeclaredMethod("prefs",Context.class);prefs.setAccessible(true);
++  android.content.SharedPreferences store=(android.content.SharedPreferences)prefs.invoke(null,target);
++  check(store.getLong("position",0)>=saved-1500,"cold opening keeps saved position");
++  Object service=playerInstance();
++  if(service!=null){
++   Field control=playback.getDeclaredField("controller");control.setAccessible(true);
++   MediaController controller=(MediaController)control.get(null);
++   PlaybackState state=controller==null?null:controller.getPlaybackState();
++   check(state==null||state.getState()!=PlaybackState.STATE_PLAYING,"cold widget must not autoplay");
++  }
++  ui(()->{opened.finish();return null;});
++ }
++}
+--- a/tests/release198/check.py
++++ b/tests/release198/check.py
+@@ -0,0 +1,50 @@
++"""Widget regression gates for UMEDJON 19.8; emulator runs in GitHub Actions."""
++from pathlib import Path
++import unittest
++
++ROOT=Path(__file__).resolve().parents[2]
++WIDGET=(ROOT/'src/com/umedjon/filemanager/PlayerWidget.java').read_text()
++TEST=(ROOT/'tests/emulator198/WidgetInstrumentation.java').read_text()
++SCRIPT=(ROOT/'scripts/emulator-test-198.sh').read_text()
++WORKFLOW=(ROOT/'.github/workflows/build-release.yml').read_text()
++
++class Widget198(unittest.TestCase):
++ def test_version_and_signer_gate(self):
++  version=(ROOT/'apk/apktool.yml').read_text()
++  self.assertIn("versionCode: '2103109'",version)
++  self.assertIn('versionName: 19.8',version)
++  self.assertIn('6259589d30dcf7fb984b1f973ed50c7e2a32372a0eb05c13efaa2cbac554a899',SCRIPT)
++
++ def test_widget_art_opens_player_instead_of_navigating_to_folder(self):
++  self.assertIn('setClassName(c,"com.alphainventor.filemanager.musicplayer.FullScreenPlayerActivity")',WIDGET)
++  self.assertNotIn('new Intent(Navigation.ACTION)',WIDGET)
++  self.assertIn('PendingIntent destination=openPlayer(c)',WIDGET)
++  self.assertIn('v.setOnClickPendingIntent(cover,destination)',WIDGET)
++  self.assertIn('v.setOnClickPendingIntent(label,destination)',WIDGET)
++
++ def test_nav_intent_does_not_restart_track(self):
++  start=WIDGET.index('static PendingIntent openPlayer(')
++  end=WIDGET.index('public void onReceive(',start)
++  code=WIDGET[start:end]
++  self.assertNotIn('player.queue',code)
++  self.assertNotIn('playFromUri',code)
++  self.assertNotIn('play()',code)
++  self.assertIn('FLAG_ACTIVITY_SINGLE_TOP',code)
++
++ def test_real_audio_and_regression_coverage(self):
++  for phrase in ('seekTo(120000)','favorites playing','folder playing',
++                 'favorites paused','folder paused','repeat tap one','repeat tap two',
++                 'widget preserves playback service instance',
++                 'widget does not rewind','cold widget must not autoplay'):
++   self.assertIn(phrase,TEST)
++
++ def test_real_emulator_is_required_to_create_draft(self):
++  self.assertIn('test -w /dev/kvm',SCRIPT)
++  self.assertIn('adb install -r "$signed_apk"',SCRIPT)
++  self.assertIn('run_widget widget',SCRIPT)
++  self.assertIn('run_widget restore',SCRIPT)
++  self.assertIn('WIDGET_TEST_PASS',SCRIPT)
++  self.assertIn('sha256sum -c "$tool_dir/logs/tested-apk-sha256.txt"',SCRIPT)
++  self.assertIn('test -f "$RUNNER_TEMP/umedjon-emulator-198/logs/emulator-ok"',WORKFLOW)
++
++if __name__=='__main__':unittest.main()
