@@ -258,6 +258,36 @@
 +sha256sum -c "$tool_dir/logs/tested-apk-sha256.txt"
 +echo 'ALL_EMULATOR_TESTS_PASSED'
 +touch "$tool_dir/logs/emulator-ok"
+--- a/src/com/umedjon/filemanager/Navigation.java	2026-11-10 22:43:20.000000000 +0500
++++ b/src/com/umedjon/filemanager/Navigation.java	2026-11-16 00:24:10.923399611 +0500
+@@ -12,5 +12,26 @@
+   Object f=Bridge.call(a,"F1");AbsListView l=Hooks.list(f);if(l!=null&&l.getAdapter()!=null){for(int i=0;i<l.getAdapter().getCount();i++){Object item=l.getAdapter().getItem(i);String key=String.valueOf(Bridge.call(item,"R"));if(key.equals(id)||key.equals(uri)){focusRow(l,i);return;}}}
+   focus(a,id,uri,attempt+1);
+  }catch(Throwable e){if(attempt<30)focus(a,id,uri,attempt+1);}},attempt==0?100:250);}
+- static void focusRow(AbsListView l,int position){l.setSelection(position);l.postDelayed(()->{View row=l.getChildAt(position-l.getFirstVisiblePosition());if(row==null)return;View target=row.findViewById(Bridge.res(row.getContext(),"id","item_container"));if(target==null)target=row;target.performAccessibilityAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS,null);},150);}
++ // A newly inflated Favorites list can reset a setSelection() issued before
++ // its first layout. Defer the scroll until layout has finished, then focus
++ // the resulting row without resetting the adapter or moving any other rows.
++ static void focusRow(AbsListView l,int position){
++  l.post(()->{
++   if(!l.isAttachedToWindow())return;
++   l.setSelectionFromTop(position,0);
++   l.postDelayed(()->{
++    if(position<l.getFirstVisiblePosition()||position>l.getLastVisiblePosition()){
++     l.setSelectionFromTop(position,0);
++     l.postDelayed(()->focusVisible(l,position),200);
++    }else focusVisible(l,position);
++   },200);
++  });
++ }
++ static void focusVisible(AbsListView l,int position){
++  View row=l.getChildAt(position-l.getFirstVisiblePosition());
++  if(row==null)return;
++  View target=row.findViewById(Bridge.res(row.getContext(),"id","item_container"));
++  if(target==null)target=row;
++  target.performAccessibilityAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS,null);
++ }
+ }
 --- a/src/com/umedjon/filemanager/Playback.java	2026-11-15 18:56:49.209923865 +0500
 +++ b/src/com/umedjon/filemanager/Playback.java	2026-11-15 23:36:02.867758833 +0500
 @@ -46,6 +46,27 @@
