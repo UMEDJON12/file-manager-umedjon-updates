@@ -733,7 +733,7 @@
 +</manifest>
 --- /dev/null
 +++ b/tests/emulator197/FavoritesInstrumentation.java
-@@ -0,0 +1,255 @@
+@@ -0,0 +1,269 @@
 +package com.umedjon.filemanager.test;
 +
 +import android.app.Activity;
@@ -757,6 +757,7 @@
 +import java.io.FileOutputStream;
 +import java.io.IOException;
 +import java.lang.reflect.Method;
++import java.lang.reflect.Field;
 +import java.nio.ByteBuffer;
 +import java.nio.ByteOrder;
 +import java.util.concurrent.Callable;
@@ -871,10 +872,22 @@
 +   return null;
 +  });
 + }
++ private void syntheticPlaybackMode(boolean synthetic){
++  ui(()->{
++   Field field=favorites.getClass().getDeclaredField("mini");
++   field.setAccessible(true);
++   Object mini=field.get(favorites);
++   Method method=mini.getClass().getDeclaredMethod(synthetic?"stop":"start");
++   method.setAccessible(true);
++   method.invoke(mini);
++   return null;
++  });
++ }
 + private void verifyRow(int position,boolean highlighted,String spoken){
 +  check(ui(()->title(position)!=null),"visible row "+position);
-+  check(ui(()->highlighted?(title(position).getCurrentTextColor()==accent):(title(position).getCurrentTextColor()!=accent)),
-+   "row tint "+position);
++  int visibleColor=ui(()->title(position).getCurrentTextColor());
++  check(highlighted?visibleColor==accent:visibleColor!=accent,
++   "row tint "+position+" actual="+Integer.toHexString(visibleColor)+" expected accent="+Integer.toHexString(accent));
 +  check(ui(()->(marker(position).getVisibility()==View.VISIBLE)==highlighted),"play/pause icon "+position);
 +  check(ui(()->{
 +   CharSequence d=description(position);
@@ -930,6 +943,7 @@
 +  list=ui(()->(ListView)favorites.findViewById(id("umedjon_favorites_list")));
 +  check(list!=null,"favorites ListView exists");
 +  waitFor("populated favorites",()->list.getChildCount()>1,10000);
++  syntheticPlaybackMode(true); // Prevent unrelated real-session callbacks overriding simulated states.
 +  check(ui(()->list.getAdapter().getCount())==28,"all favorites shown");
 +  accent=target.getResources().getColor(target.getResources().getIdentifier("bt_accent","color",APP));
 +  show(uriOne,"unique-media-one",PlaybackState.STATE_PLAYING);
@@ -957,6 +971,7 @@
 +  check(ui(()->list.getFirstVisiblePosition())==first,"scroll preserved after playback update");
 +  show(null,null,PlaybackState.STATE_NONE);
 +  // Use the real player and real files, not only simulated UI state.
++  syntheticPlaybackMode(false);
 +  ui(()->{list.setSelectionFromTop(0,0);return null;});
 +  waitFor("first audio row",()->row(0)!=null,5000);
 +  waitFor("real MediaController connected",()->controller()!=null,15000);
