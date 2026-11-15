@@ -443,8 +443,8 @@
 +        android:functionalTest="true"/>
 +</manifest>
 --- a/tests/emulator199/NavigationInstrumentation.java	1970-01-01 06:00:00.000000000 +0600
-+++ b/tests/emulator199/NavigationInstrumentation.java	2026-11-16 00:54:42.658687459 +0500
-@@ -0,0 +1,344 @@
++++ b/tests/emulator199/NavigationInstrumentation.java	2026-11-16 01:01:12.982329272 +0500
+@@ -0,0 +1,367 @@
 +package com.umedjon.filemanager.test;
 +
 +import android.app.*;
@@ -572,13 +572,34 @@
 +  m.setAccessible(true);
 +  return (AbsListView)m.invoke(null,fragment);
 + }
-+ private int fileRow(AbsListView list,String filename)throws Exception{
++ private int fileRow(AbsListView list,File targetFile)throws Exception{
 +  if(list==null||list.getAdapter()==null)return -1;
++  String path=targetFile.getAbsolutePath(),filename=targetFile.getName();
 +  for(int i=0;i<list.getAdapter().getCount();i++){
 +   Object item=list.getAdapter().getItem(i);
-+   if(item!=null&&filename.equals(String.valueOf(appCall(item,"B"))))return i;
++   if(item==null)continue;
++   try{
++    Object local=appCall(item,"O");
++    if(local instanceof File&&path.equals(((File)local).getAbsolutePath()))return i;
++   }catch(Exception ignored){}
++   String title=String.valueOf(appCall(item,"B"));
++   if(filename.equals(title)||filename.substring(0,filename.lastIndexOf('.')).equals(title))return i;
 +  }
 +  return -1;
++ }
++ private String folderListing(Activity manager)throws Exception{
++  AbsListView list=filesList(manager);
++  if(list==null)return "no active AbsListView";
++  if(list.getAdapter()==null)return "adapter not attached";
++  StringBuilder info=new StringBuilder("items=").append(list.getAdapter().getCount());
++  for(int i=0;i<Math.min(12,list.getAdapter().getCount());i++){
++   Object item=list.getAdapter().getItem(i);
++   info.append(" [").append(i).append(":");
++   try{info.append(appCall(item,"B"));}catch(Exception e){info.append("no-title");}
++   try{info.append("/").append(appCall(item,"R"));}catch(Exception ignored){}
++   info.append("]");
++  }
++  return info.toString();
 + }
 + private String folderUri(File file)throws Exception{
 +  File root=Environment.getExternalStorageDirectory();
@@ -608,11 +629,13 @@
 +  ui(()->{Method m=manager.getClass().getMethod("p2",String.class,Runnable.class);
 +   m.invoke(manager,folder,(Runnable)null);return null;});
 +  stage("native folder p2 returned");
-+  await("real file manager displays source folder",()->fileRow(filesList(manager),file.getName())>=0,15000);
++  try{await("real file manager displays source folder",()->fileRow(filesList(manager),file)>=0,15000);}
++  catch(AssertionError e){throw new AssertionError("Source file absent in native folder URI "+folder+": "+
++   ui(()->folderListing(manager)),e);}
 +  stage("native folder row visible");
 +  return ui(()->{
 +   AbsListView list=filesList(manager);
-+   return String.valueOf(appCall(list.getAdapter().getItem(fileRow(list,file.getName())),"R"));
++   return String.valueOf(appCall(list.getAdapter().getItem(fileRow(list,file)),"R"));
 +  });
 + }
 + private Activity launchFavorites(){
@@ -735,7 +758,7 @@
 +  ok(expected.equals(widget()),"folder widget sends established playback-source navigation intent");
 +  Activity manager=resumed;
 +  await("folder widget returns to source file row",()->{
-+   AbsListView list=filesList(manager);int row=fileRow(list,"source-nav-folder.wav");
++   AbsListView list=filesList(manager);int row=fileRow(list,new File(Uri.parse(sourceUri).getPath()));
 +   return row>=0&&list.getFirstVisiblePosition()<=row&&list.getLastVisiblePosition()>=row;
 +  },15000);
 +  stage("folder widget source row visible");
