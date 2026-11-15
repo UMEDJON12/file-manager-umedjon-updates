@@ -114,6 +114,9 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         env:
           GH_TOKEN: ${{ github.token }}
+          UMEDJON_STORE_PASS: ${{ secrets.UMEDJON_STORE_PASS }}
+          UMEDJON_KEY_PASS: ${{ secrets.UMEDJON_KEY_PASS }}
+          UMEDJON_KEY_ALIAS: ${{ secrets.UMEDJON_KEY_ALIAS }}
         with:
           api-level: 35
           target: google_apis
