@@ -451,8 +451,8 @@
 +        android:functionalTest="true"/>
 +</manifest>
 --- a/tests/emulator199/NavigationInstrumentation.java	1970-01-01 06:00:00.000000000 +0600
-+++ b/tests/emulator199/NavigationInstrumentation.java	2026-11-16 01:01:12.982329272 +0500
-@@ -0,0 +1,367 @@
++++ b/tests/emulator199/NavigationInstrumentation.java	2026-11-16 01:13:14.458230600 +0500
+@@ -0,0 +1,370 @@
 +package com.umedjon.filemanager.test;
 +
 +import android.app.*;
@@ -613,8 +613,11 @@
 +  File root=Environment.getExternalStorageDirectory();
 +  String path=file.getParentFile().getCanonicalPath(),base=root.getCanonicalPath();
 +  ok(path.startsWith(base+File.separator),"folder is under main storage");
++  // The stock file manager uses absolute paths inside its native main:// URI:
++  // e.g. main://0/storage/emulated/0/Download. Its directory adapter exposes
++  // those actual identities, so removing the storage prefix navigates to root.
 +  return new Uri.Builder().scheme("main").authority("0")
-+   .path(path.substring(base.length())).build().toString();
++   .path(path).build().toString();
 + }
 + private String realFolderMediaId(File file)throws Exception{
 +  stage("native folder start MainActivity");
