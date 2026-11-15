@@ -442,7 +442,7 @@
  }
 --- a/src/com/umedjon/filemanager/Playback.java
 +++ b/src/com/umedjon/filemanager/Playback.java
-@@ -1,11 +1,16 @@
+@@ -1,11 +1,30 @@
  package com.umedjon.filemanager;
  import android.app.*;import android.content.*;import android.media.*;import android.media.session.*;import android.net.Uri;import android.os.*;import android.util.Pair;import java.util.*;import org.json.*;
  public final class Playback {
@@ -457,13 +457,27 @@
 - public static void destroyed(Service s){engineSave(true);save(true);handler.removeCallbacks(tick);if(controller!=null)controller.unregisterCallback(callback);controller=null;service=null;queueSource=null;}
 + public static void destroyed(Service s){engineSave(true);save(true);handler.removeCallbacks(tick);if(controller!=null)controller.unregisterCallback(callback);controller=null;service=null;queueSource=null;queueEndPending=false;}
 + /** Only natural exhaustion of the active queue parks the notification. */
-+ public static void queueFinished(){queueEndPending=true;handler.removeCallbacks(tick);}
++ public static void queueFinished(){
++  queueEndPending=true;handler.removeCallbacks(tick);
++  final Service owner=service;
++  if(owner==null)return;
++  // The engine may publish STOPPED before it reports that the queue is exhausted.
++  // That earlier callback dismisses the media notification, so restore the
++  // existing media notification only after STOPPED has settled.
++  try{Object timer=Bridge.get(owner,"t0");if(timer instanceof Handler)((Handler)timer).removeCallbacksAndMessages(null);}
++  catch(Throwable e){android.util.Log.w("UMEDJON","Keep media service",e);}
++  handler.postDelayed(()->{
++   if(!queueEndPending||service!=owner)return;
++   try{Object notice=Bridge.get(owner,"s0");if(notice!=null)Bridge.call(notice,"l");}
++   catch(Throwable e){android.util.Log.e("UMEDJON","Restore finished queue notification",e);}
++  },450);
++ }
 + public static boolean queueEndPending(){return queueEndPending;}
 + public static void clearQueueEnd(){queueEndPending=false;if(service!=null){handler.removeCallbacks(tick);handler.post(tick);}}
   static SharedPreferences prefs(Context c){return c.getSharedPreferences("umedjon_playback",0);}
   static void save(boolean sync){if(restoring||service==null||controller==null)return;try{MediaMetadata d=controller.getMetadata();PlaybackState state=controller.getPlaybackState();if(d==null||state==null)return;String uri=d.getString("__SOURCE__");if(uri==null||uri.isEmpty())return;String expected=prefs(service).getString("restored_uri",null);if(expected!=null){if(!expected.equals(uri))return;prefs(service).edit().remove("restored_uri").apply();}long pos=state.getPosition();if(state.getState()==PlaybackState.STATE_NONE)pos=PlaybackMemory.position(service,uri,d.getString(MediaMetadata.METADATA_KEY_MEDIA_ID));if(state.getState()==PlaybackState.STATE_PLAYING)pos+=(long)((SystemClock.elapsedRealtime()-state.getLastPositionUpdateTime())*state.getPlaybackSpeed());SharedPreferences.Editor e=prefs(service).edit().putString("uri",uri).putString("media_id",d.getString(MediaMetadata.METADATA_KEY_MEDIA_ID)).putString("title",d.getString(MediaMetadata.METADATA_KEY_TITLE)).putString("folder",d.getString("__SOURCE_FOLDER__")).putLong("position",AudioOptions.remember(service)?Math.max(0,pos):0);
   if(!uri.equals(queueSource)){Artwork.request(service,d,uri);queueSource=uri;}
-@@ -14,8 +18,8 @@
+@@ -14,8 +32,8 @@
   if(sync)e.commit();else e.apply();PlayerWidget.update(service);}catch(Throwable e){android.util.Log.e("UMEDJON","Save playback",e);}}
   public static boolean command(Service s,Intent i){if(i==null)return false;String action=i.getAction();if(action==null||!action.startsWith("com.umedjon.filemanager.player."))return false;if(controller==null)attach(s);try{Bridge.call(Bridge.get(s,"s0"),"l");if(controller==null){idle(s,"Не удалось запустить плеер");return true;}
    MediaController.TransportControls t=controller.getTransportControls();String cmd=action.substring(action.lastIndexOf('.')+1);if("queue".equals(cmd)){if("favorites".equals(i.getStringExtra("origin")))prefs(s).edit().putString("origin_kind","favorites").apply();else prefs(s).edit().putString("origin_kind","folder").putString("origin_folder",i.getStringExtra("folder")).apply();String[] uris=i.getStringArrayExtra("uris");String[] ids=i.getStringArrayExtra("ids");ArrayList<Pair<Uri,String>>q=new ArrayList<>();for(int x=0;x<uris.length;x++)q.add(Pair.create(Uri.parse(uris[x]),ids==null?uris[x]:ids[x]));Bridge.call(Bridge.stat("ax.W4.a","b"),"d",q);Bundle b=new Bundle();b.putString("PLAY_FOLDER_URI",i.getStringExtra("folder"));t.playFromUri(Uri.parse(uris[i.getIntExtra("index",0)]),b);}
@@ -474,7 +488,7 @@
    else restore(s,"toggle");
   }catch(Throwable e){Bridge.error(s,e);idle(s,"Не удалось открыть трек");}return true;}
  
-@@ -29,6 +33,7 @@
+@@ -29,6 +47,7 @@
   }
   public static ArrayList<Pair<Uri,String>> prepareQueue(ArrayList<Pair<Uri,String>> list,Uri selected,Bundle extras){try{Context c=service!=null?service:Startup.context;if(c!=null&&selected!=null)return PlaybackMemory.queue(c,list,selected);}catch(Exception e){android.util.Log.e("UMEDJON","Queue bookmark",e);}return list;}
   public static void beforePlay(Object engine,Object queueItem){try{
