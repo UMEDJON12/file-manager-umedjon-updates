@@ -259,8 +259,8 @@
 +echo 'ALL_EMULATOR_TESTS_PASSED'
 +touch "$tool_dir/logs/emulator-ok"
 --- a/src/com/umedjon/filemanager/Navigation.java	2026-11-10 22:43:20.000000000 +0500
-+++ b/src/com/umedjon/filemanager/Navigation.java	2026-11-16 00:24:10.923399611 +0500
-@@ -12,5 +12,26 @@
++++ b/src/com/umedjon/filemanager/Navigation.java	2026-11-16 00:30:25.447177899 +0500
+@@ -12,5 +12,31 @@
    Object f=Bridge.call(a,"F1");AbsListView l=Hooks.list(f);if(l!=null&&l.getAdapter()!=null){for(int i=0;i<l.getAdapter().getCount();i++){Object item=l.getAdapter().getItem(i);String key=String.valueOf(Bridge.call(item,"R"));if(key.equals(id)||key.equals(uri)){focusRow(l,i);return;}}}
    focus(a,id,uri,attempt+1);
   }catch(Throwable e){if(attempt<30)focus(a,id,uri,attempt+1);}},attempt==0?100:250);}
@@ -268,17 +268,22 @@
 + // A newly inflated Favorites list can reset a setSelection() issued before
 + // its first layout. Defer the scroll until layout has finished, then focus
 + // the resulting row without resetting the adapter or moving any other rows.
-+ static void focusRow(AbsListView l,int position){
-+  l.post(()->{
-+   if(!l.isAttachedToWindow())return;
-+   l.setSelectionFromTop(position,0);
-+   l.postDelayed(()->{
-+    if(position<l.getFirstVisiblePosition()||position>l.getLastVisiblePosition()){
-+     l.setSelectionFromTop(position,0);
-+     l.postDelayed(()->focusVisible(l,position),200);
-+    }else focusVisible(l,position);
-+   },200);
-+  });
++ static void focusRow(AbsListView l,int position){focusRowAttempt(l,position,0);}
++ static void focusRowAttempt(AbsListView l,int position,int attempt){
++  l.postDelayed(()->{
++   if(!l.isAttachedToWindow()||l.getAdapter()==null||position>=l.getAdapter().getCount()){
++    if(attempt<20)focusRowAttempt(l,position,attempt+1);
++    return;
++   }
++   if(position<l.getFirstVisiblePosition()||position>l.getLastVisiblePosition()||l.getChildCount()==0){
++    l.setSelectionFromTop(position,0);
++    android.util.Log.d("UMEDJON_NAVIGATION","Focus source row "+position+" attempt "+attempt+
++     " visible="+l.getFirstVisiblePosition()+".."+l.getLastVisiblePosition());
++    if(attempt<20)focusRowAttempt(l,position,attempt+1);
++    return;
++   }
++   focusVisible(l,position);
++  },attempt==0?100:200);
 + }
 + static void focusVisible(AbsListView l,int position){
 +  View row=l.getChildAt(position-l.getFirstVisiblePosition());
