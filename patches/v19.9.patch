@@ -372,8 +372,8 @@
 +        android:functionalTest="true"/>
 +</manifest>
 --- a/tests/emulator199/NavigationInstrumentation.java	1970-01-01 06:00:00.000000000 +0600
-+++ b/tests/emulator199/NavigationInstrumentation.java	2026-11-15 23:54:31.447336007 +0500
-@@ -0,0 +1,238 @@
++++ b/tests/emulator199/NavigationInstrumentation.java	2026-11-16 00:10:45.756341424 +0500
+@@ -0,0 +1,290 @@
 +package com.umedjon.filemanager.test;
 +
 +import android.app.*;
@@ -386,6 +386,7 @@
 +import android.os.*;
 +import android.service.notification.StatusBarNotification;
 +import android.view.KeyEvent;
++import android.widget.AbsListView;
 +import android.widget.ListView;
 +import java.io.*;
 +import java.lang.reflect.*;
@@ -487,19 +488,62 @@
 +   new Object[]{uri,"source-nav-track","Модар",Uri.fromFile(new File(Uri.parse(uri).getPath()).getParentFile()).toString(),900,900});
 +  }
 + }
++ private Object appCall(Object receiver,String name,Object... parameters)throws Exception{
++  Method m=Class.forName("com.umedjon.filemanager.Bridge")
++   .getDeclaredMethod("call",Object.class,String.class,Object[].class);
++  m.setAccessible(true);
++  return m.invoke(null,receiver,name,parameters);
++ }
++ private AbsListView filesList(Activity activity)throws Exception{
++  Object fragment=appCall(activity,"F1");
++  Method m=Class.forName("com.umedjon.filemanager.Hooks").getDeclaredMethod("list",Object.class);
++  m.setAccessible(true);
++  return (AbsListView)m.invoke(null,fragment);
++ }
++ private int fileRow(AbsListView list,String filename)throws Exception{
++  if(list==null||list.getAdapter()==null)return -1;
++  for(int i=0;i<list.getAdapter().getCount();i++){
++   Object item=list.getAdapter().getItem(i);
++   if(item!=null&&filename.equals(String.valueOf(appCall(item,"B"))))return i;
++  }
++  return -1;
++ }
++ private String folderUri(File file)throws Exception{
++  File root=Environment.getExternalStorageDirectory();
++  String path=file.getParentFile().getCanonicalPath(),base=root.getCanonicalPath();
++  ok(path.startsWith(base+File.separator),"folder is under main storage");
++  return new Uri.Builder().scheme("main").authority("0")
++   .path(path.substring(base.length())).build().toString();
++ }
++ private String realFolderMediaId(File file)throws Exception{
++  Activity manager=startActivitySync(new Intent(Intent.ACTION_MAIN).setClassName(context,MAIN)
++   .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
++  String folder=folderUri(file);
++  ui(()->{Method m=manager.getClass().getMethod("p2",String.class,Runnable.class);
++   m.invoke(manager,folder,(Runnable)null);return null;});
++  await("real file manager displays source folder",()->fileRow(filesList(manager),file.getName())>=0,15000);
++  return ui(()->{
++   AbsListView list=filesList(manager);
++   return String.valueOf(appCall(list.getAdapter().getItem(fileRow(list,file.getName())),"R"));
++  });
++ }
 + private Activity launchFavorites(){
 +  Activity activity=startActivitySync(new Intent(Intent.ACTION_MAIN).setClassName(context,FAVORITES)
 +   .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
 +  await("Favorites controller",()->activity.getMediaController()!=null,15000);
 +  return activity;
 + }
-+ private void queue(File file,String origin)throws Exception{
++ private void queue(File file,String origin)throws Exception{queue(file,origin,"source-nav-track");}
++ private void queue(File file,String origin,String mediaId)throws Exception{
 +  sourceUri=Uri.fromFile(file).toString();
++  // MainActivity.p2 accepts the file manager's own location URI (main://id/path),
++  // not a generic file:// directory. Real folder playback records this format.
++  String nativeFolder=folderUri(file);
 +  Intent start=new Intent("com.umedjon.filemanager.player.queue")
 +   .setClassName(context,"com.example.android.uamp.MusicService");
-+  start.putExtra("uris",new String[]{sourceUri}).putExtra("ids",new String[]{"source-nav-track"})
++  start.putExtra("uris",new String[]{sourceUri}).putExtra("ids",new String[]{mediaId})
 +   .putExtra("index",0).putExtra("origin",origin)
-+   .putExtra("folder",Uri.fromFile(file.getParentFile()).toString())
++   .putExtra("folder",nativeFolder)
 +   .putExtra("START_FOREGROUND",true);
 +  context.startForegroundService(start);
 +  await(origin+" live audio",()->{
@@ -571,6 +615,11 @@
 +   .setClassName(context,MAIN).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP);
 +  PendingIntent expected=PendingIntent.getActivity(context,154,route,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
 +  ok(expected.equals(widget()),"folder widget sends established playback-source navigation intent");
++  Activity manager=resumed;
++  await("folder widget returns to source file row",()->{
++   AbsListView list=filesList(manager);int row=fileRow(list,"source-nav-folder.wav");
++   return row>=0&&list.getFirstVisiblePosition()<=row&&list.getLastVisiblePosition()>=row;
++  },15000);
 +  unchanged("folder widget",state,before,original,owner);
 + }
 + private void navigation()throws Exception{
@@ -586,7 +635,10 @@
 +  widgetToFavorites("favorites paused",PlaybackState.STATE_PAUSED);
 +  notificationAndBack("favorites paused",PlaybackState.STATE_PAUSED);
 +
-+  queue(wav("source-nav-folder.wav"),"folder");
++  File folderTrack=wav("source-nav-folder.wav");
++  String folderMediaId=realFolderMediaId(folderTrack);
++  ok(folderMediaId!=null&&!folderMediaId.isEmpty(),"real folder media ID resolved");
++  queue(folderTrack,"folder",folderMediaId);
 +  folderWidget(PlaybackState.STATE_PLAYING);
 +  notificationAndBack("folder playing",PlaybackState.STATE_PLAYING);
 +  playback.getTransportControls().pause();
