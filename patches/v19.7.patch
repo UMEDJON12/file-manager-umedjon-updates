@@ -1,0 +1,989 @@
+--- a/.github/workflows/build-release.yml
++++ b/.github/workflows/build-release.yml
+@@ -1,4 +1,4 @@
+-name: Build and draft UMEDJON 19.6
++name: Build, emulate and draft UMEDJON 19.7
+ 
+ on:
+   workflow_dispatch:
+@@ -9,7 +9,7 @@
+ jobs:
+   build:
+     runs-on: ubuntu-24.04
+-    timeout-minutes: 60
++    timeout-minutes: 100
+     steps:
+       - name: Checkout workflow repository
+         uses: actions/checkout@v4
+@@ -33,18 +33,20 @@
+       - name: Install APK inspection tools
+         run: sdkmanager 'build-tools;35.0.0'
+ 
+-      - name: Restore verified 19.5 sources and apply the 19.6 fix
++      - name: Restore verified 19.5 sources and apply the 19.6 + 19.7 patches
+         run: |
+           set -euo pipefail
+           test -d sources/v19.5
+           test -f sources/v19.5/SHA256SUMS
+           test -f patches/v19.6.patch
++          test -f patches/v19.7.patch
+           (cd sources/v19.5 && sha256sum -c SHA256SUMS)
+           cat sources/v19.5/source.part-* > "$RUNNER_TEMP/File-Manager-UMEDJON-19.5-Source.zip"
+           unzip -tq "$RUNNER_TEMP/File-Manager-UMEDJON-19.5-Source.zip"
+           unzip -q "$RUNNER_TEMP/File-Manager-UMEDJON-19.5-Source.zip" -d "$RUNNER_TEMP/project"
+           test -f "$RUNNER_TEMP/project/UMEDJON-Source/scripts/build.py"
+           (cd "$RUNNER_TEMP/project/UMEDJON-Source" && patch --batch --forward -p1 < "$GITHUB_WORKSPACE/patches/v19.6.patch")
++          (cd "$RUNNER_TEMP/project/UMEDJON-Source" && patch --batch --forward -p1 < "$GITHUB_WORKSPACE/patches/v19.7.patch")
+           test ! -e "$RUNNER_TEMP/project/UMEDJON-Source/keys/signing.json"
+           test ! -e "$RUNNER_TEMP/project/UMEDJON-Source/keys/umedjon.jks"
+ 
+@@ -54,6 +56,7 @@
+           cd "$RUNNER_TEMP/project/UMEDJON-Source"
+           python3 -m unittest discover -s tests/release195 -p check.py -v
+           python3 -m unittest discover -s tests/release196 -p check.py -v
++          python3 -m unittest discover -s tests/release197 -p check.py -v
+ 
+       - name: Restore the original signing key from Secrets
+         env:
+@@ -77,19 +80,19 @@
+           set -euo pipefail
+           cd "$RUNNER_TEMP/project/UMEDJON-Source"
+           python3 scripts/build.py
+-          test -s output/File-Manager-UMEDJON-19.6.apk
++          test -s output/File-Manager-UMEDJON-19.7.apk
+ 
+       - name: Verify package, version, signer and SHA-256
+         run: |
+           set -euo pipefail
+-          APK="$RUNNER_TEMP/project/UMEDJON-Source/output/File-Manager-UMEDJON-19.6.apk"
++          APK="$RUNNER_TEMP/project/UMEDJON-Source/output/File-Manager-UMEDJON-19.7.apk"
+           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" > "$RUNNER_TEMP/badging.txt"
+           python3 - <<'PY'
+           import pathlib,re,os
+           text=(pathlib.Path(os.environ['RUNNER_TEMP'])/'badging.txt').read_text()
+           match=re.search(r"^package: name='([^']+)' versionCode='([^']+)' versionName='([^']+)'",text,re.M)
+           assert match, 'Unable to read APK package identity'
+-          assert match.groups()==('com.umedjon.filemanager','2103107','19.6'),match.groups()
++          assert match.groups()==('com.umedjon.filemanager','2103108','19.7'),match.groups()
+           PY
+           java -jar "$RUNNER_TEMP/project/UMEDJON-Source/toolchain/sdk/android-15/lib/apksigner.jar" verify --verbose "$APK"
+           sha256sum "$APK"
+@@ -97,39 +100,70 @@
+       - name: Upload verified APK as workflow artifact
+         uses: actions/upload-artifact@v4
+         with:
+-          name: File-Manager-UMEDJON-19.6-signed
+-          path: ${{ runner.temp }}/project/UMEDJON-Source/output/File-Manager-UMEDJON-19.6.apk
++          name: File-Manager-UMEDJON-19.7-signed
++          path: ${{ runner.temp }}/project/UMEDJON-Source/output/File-Manager-UMEDJON-19.7.apk
+           if-no-files-found: error
+ 
+-      - name: Package complete public 19.6 sources without private keys
++      - name: Enable KVM for Android Emulator
++        run: |
++          test -e /dev/kvm
++          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
++          sudo udevadm control --reload-rules
++          sudo udevadm trigger --name-match=kvm
++          test -w /dev/kvm
++
++      - name: Test signed APK in GitHub Android Emulator (API 35, KVM)
++        uses: reactivecircus/android-emulator-runner@v2
++        env:
++          GH_TOKEN: ${{ github.token }}
++        with:
++          api-level: 35
++          target: google_apis
++          arch: x86_64
++          profile: pixel_7
++          emulator-boot-timeout: 600
++          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-boot-anim
++          disable-animations: true
++          script: bash "$RUNNER_TEMP/project/UMEDJON-Source/scripts/emulator-test-197.sh"
++
++      - name: Upload Android Emulator logs and accessibility screenshot
++        if: always()
++        uses: actions/upload-artifact@v4
++        with:
++          name: File-Manager-UMEDJON-19.7-Emulator-Report
++          path: ${{ runner.temp }}/umedjon-emulator-197/logs
++          if-no-files-found: warn
++
++      - name: Package complete public 19.7 sources without private keys
+         run: |
+           set -euo pipefail
+           cd "$RUNNER_TEMP/project/UMEDJON-Source"
+           python3 scripts/package-release195.py --public-only
+-          SOURCE="$RUNNER_TEMP/deliverables/File-Manager-UMEDJON-19.6-Source.zip"
++          SOURCE="$RUNNER_TEMP/deliverables/File-Manager-UMEDJON-19.7-Source.zip"
+           unzip -tq "$SOURCE"
+           if unzip -Z -1 "$SOURCE" | grep -E '^UMEDJON-Source/keys/'; then
+             echo 'Signing material detected in public ZIP' >&2
+             exit 1
+           fi
+ 
+-      - name: Create an unpublished draft automatically with built artifacts
++      - name: Create an unpublished draft only after Android Emulator passes
+         env:
+           GH_TOKEN: ${{ github.token }}
+-          RELEASE_TAG: v19.6
++          RELEASE_TAG: v19.7
+         run: |
+           set -euo pipefail
+-          APK="$RUNNER_TEMP/project/UMEDJON-Source/output/File-Manager-UMEDJON-19.6.apk"
+-          SOURCE="$RUNNER_TEMP/deliverables/File-Manager-UMEDJON-19.6-Source.zip"
++          test -f "$RUNNER_TEMP/umedjon-emulator-197/logs/emulator-ok"
++          APK="$RUNNER_TEMP/project/UMEDJON-Source/output/File-Manager-UMEDJON-19.7.apk"
++          SOURCE="$RUNNER_TEMP/deliverables/File-Manager-UMEDJON-19.7-Source.zip"
+           python3 - <<'PY'
+           import hashlib,json,os,pathlib
+           tag=os.environ['RELEASE_TAG'];repo=os.environ['GITHUB_REPOSITORY']
+-          apk=pathlib.Path(os.environ['RUNNER_TEMP'])/'project/UMEDJON-Source/output/File-Manager-UMEDJON-19.6.apk'
++          apk=pathlib.Path(os.environ['RUNNER_TEMP'])/'project/UMEDJON-Source/output/File-Manager-UMEDJON-19.7.apk'
+           out=pathlib.Path(os.environ['RUNNER_TEMP'])/'update.json'
+-          data={'versionName':'19.6','versionCode':2103107,
++          data={'versionName':'19.7','versionCode':2103108,
+                 'apkUrl':f'https://github.com/{repo}/releases/download/{tag}/{apk.name}',
+                 'sha256':hashlib.sha256(apk.read_bytes()).hexdigest(),
+-                'notes':'Исправлен возврат после открытия созданного PDF: окно завершения больше не появляется повторно.',
++                'notes':'Исправлено отображение воспроизводимого трека в избранном. Плеер остаётся в уведомлениях после окончания очереди.',
+                 'releaseUrl':f'https://github.com/{repo}/releases/tag/{tag}'}
+           out.write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n')
+           PY
+@@ -138,16 +172,16 @@
+           if [ -z "$RELEASE_ID" ]; then
+             gh release create "$RELEASE_TAG" "$APK" "$SOURCE" "$RUNNER_TEMP/update.json" \
+               --repo "$GITHUB_REPOSITORY" --draft --target "$GITHUB_SHA" \
+-              --title 'Файловый менеджер UMEDJON — версия 19.6' \
+-              --notes 'Исправлен возврат после открытия созданного PDF: окно завершения больше не появляется повторно.'
++              --title 'Файловый менеджер UMEDJON — версия 19.7' \
++              --notes 'Исправлено отображение воспроизводимого трека в избранном. Плеер остаётся в уведомлениях после окончания очереди.'
+             RELEASE_ID="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+               --jq ".[] | select(.tag_name == \"${RELEASE_TAG}\") | .id" | head -n 1)"
+           fi
+           test -n "$RELEASE_ID"
+           test "$(gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" --jq '.draft')" = true
+           ASSETS="$(gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" --jq '.assets[].name')"
+-          printf '%s\n' "$ASSETS" | grep -Fxq 'File-Manager-UMEDJON-19.6.apk'
+-          printf '%s\n' "$ASSETS" | grep -Fxq 'File-Manager-UMEDJON-19.6-Source.zip'
++          printf '%s\n' "$ASSETS" | grep -Fxq 'File-Manager-UMEDJON-19.7.apk'
++          printf '%s\n' "$ASSETS" | grep -Fxq 'File-Manager-UMEDJON-19.7-Source.zip'
+           printf '%s\n' "$ASSETS" | grep -Fxq 'update.json'
+           gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
+             --jq '{draft: .draft, url: .html_url, assets: [.assets[].name]}'
+--- a/BUILD-RESULT.json
++++ b/BUILD-RESULT.json
+@@ -1,21 +1,22 @@
+ {
+-  "apk": "File-Manager-UMEDJON-19.6.apk",
+-  "version": "19.6",
+-  "version_code": 2103107,
+-  "previous_version_code": 2103106,
+-  "purpose": "Close completed PDF progress UI after opening the document; keep Back navigation and background queue intact",
++  "apk": "File-Manager-UMEDJON-19.7.apk",
++  "version": "19.7",
++  "version_code": 2103108,
++  "previous_version_code": 2103107,
++  "purpose": "Synchronize favorites playing/paused indicators and retain the media notification after the last queued track",
+   "bytes": 25824418,
+-  "sha256": "7c82f315e54a6dcaac88a5a3a4a234211326cc5fc244bd7f79cd126420f23aa2",
++  "sha256": "a0aa71d4232c8534bc89723fd512a5759e612b9f37fa890c614029499d31e820",
+   "signing_certificate_sha256": "6259589d30dcf7fb984b1f973ed50c7e2a32372a0eb05c13efaa2cbac554a899",
+   "application_id": "com.umedjon.filemanager",
+   "changed_java_files": [
+-    "PhotoPdfProgressDialog.java",
+-    "PhotoPdfProgressActivity.java"
++    "FavoritesActivity.java",
++    "MiniPlayer.java",
++    "Playback.java"
+   ],
+   "added_java_files": [],
+-  "changed_smali_files": [],
++  "changed_smali_files": ["ax/X4/g.smali", "ax/V4/d$a.smali", "com/example/android/uamp/MusicService.smali"],
+   "changed_resources": ["apktool.yml"],
+-  "scripts_changed": [".github/workflows/build-release.yml"],
++  "scripts_changed": [".github/workflows/build-release.yml", "scripts/emulator-test-197.sh"],
+   "pdf_database_migrated_from_1_to_2": true,
+   "backup_engine_unchanged": true,
+   "zip_crc_verified": true,
+@@ -27,11 +28,19 @@
+   "static_checks": {
+     "tests/release195/check.py": "6/6 passed",
+     "tests/release196/check.py": "5/5 passed",
++    "tests/release197/check.py": "9/9 passed",
+     "tests/release195/PdfInsertedPageJvm.java": "passed (PDF page insertion and text stream persisted)",
+     "tests/release194/PdfTextEditJvm.java": "passed (PDF true text replacement)",
+     "verify_dex": "passed",
+     "apksigner": "passed"
+   },
++  "github_emulator": {
++    "state": "pending GitHub Actions API 35 KVM run",
++    "tested_apk_sha256": null,
++    "upgrade_test": null,
++    "real_audio_test": null,
++    "end_of_ten_track_queue_notification_test": null
++  },
+   "robolectric": {
+     "apis": [],
+     "passed_tests": 0,
+--- a/README-RU.md
++++ b/README-RU.md
+@@ -1,7 +1,15 @@
+-Файловый менеджер UMEDJON 19.6
+-Версия: 19.6; versionCode: 2103107.
++Файловый менеджер UMEDJON 19.7
++Версия: 19.7; versionCode: 2103108.
+ Пакет: com.umedjon.filemanager.
+ 
++Изменения версии 19.7
++
++- Исправлено отображение воспроизводимого трека в избранном.
++- Панель музыкального плеера остаётся в уведомлениях после завершения последней композиции очереди (включая десять треков); закрытие вручную её убирает.
++- Активная композиция выделяется бирюзовым цветом и значком, пауза показывается отдельно; при остановке выделение исчезает.
++- Сопоставление выполняется по URI или уникальному media ID, а не по названию. При переключении музыки обновляются только видимые строки, без сброса прокрутки и фокуса.
++- GitHub Actions проверяет установку поверх опубликованной 19.6, сохранность тестовых настроек, реальные изменения состояния плеера и UI на Android Emulator с KVM. При неуспешной обязательной проверке черновик не создаётся.
++
+ Изменения версии 19.6
+ 
+ - Исправлен возврат после открытия созданного PDF: окно завершения больше не появляется повторно.
+--- a/RESTORE-AND-HANDOFF-RU.md
++++ b/RESTORE-AND-HANDOFF-RU.md
+@@ -1,10 +1,10 @@
+-# Файловый менеджер UMEDJON 19.6 — восстановление проекта
++# Файловый менеджер UMEDJON 19.7 — восстановление проекта
+ 
+ ## Основа
+ 
+ - `applicationId`: `com.umedjon.filemanager`
+-- `versionName`: `19.6`
+-- `versionCode`: `2103107` (опубликованная версия 19.5 имеет `2103106`)
++- `versionName`: `19.7`
++- `versionCode`: `2103108` (опубликованная версия 19.6 имеет `2103107`)
+ - SHA-256 исходного сертификата: `6259589d30dcf7fb984b1f973ed50c7e2a32372a0eb05c13efaa2cbac554a899`
+ - Архитектура: Java-классы из `src/`, оригинальный smali из `apk/smali_classes*`, библиотеки в `lib/`, инструменты в `toolchain/`, сборка в `scripts/build.py`.
+ 
+@@ -16,12 +16,12 @@
+ 2. На Linux x86_64 установить Java 17 и Python 3.11+.
+ 3. Убедиться, что `keys/umedjon.jks` и `keys/signing.json` находятся в каталоге проекта. Пароли и alias уже записаны в приватном комплекте — не пересылать их открытым текстом.
+ 4. Запустить в корне проекта `python3 scripts/build.py`.
+-5. Проверить `output/File-Manager-UMEDJON-19.6.apk`: подпись, пакет, версии и контрольную сумму. Сборщик автоматически отвергает чужой сертификат.
+-6. Не удалять данные приложения при установке поверх 19.5. Для проверки пользователь должен использовать штатный Android Installer.
++5. Проверить `output/File-Manager-UMEDJON-19.7.apk`: подпись, пакет, версии и контрольную сумму. Сборщик автоматически отвергает чужой сертификат.
++6. Проверить установку поверх 19.6 без удаления данных в Android Emulator GitHub Actions.
+ 
+ ## Публичный архив и GitHub Actions
+ 
+-Публичный ZIP содержит исходники, зависимости, тесты, скрипты и `.github/workflows/build-release.yml`, но **не содержит** приватных ключей и паролей. Для запуска GitHub Actions **не требуется** заранее создавать черновик: workflow проверяет хеши исходных частей опубликованной 19.5 в `sources/v19.5/`, применяет точечный текстовый патч `patches/v19.6.patch`, собирает версию 19.6 и создаёт полный публичный ZIP из обновлённых исходников. После сборки workflow создаёт неопубликованный черновик `v19.6` и прикрепляет проверенные файлы.
++Публичный ZIP содержит исходники, зависимости, тесты, скрипты и `.github/workflows/build-release.yml`, но **не содержит** приватных ключей и паролей. GitHub Actions восстанавливает исходники из `sources/v19.5/` с патчами `patches/v19.6.patch` и `patches/v19.7.patch`, собирает версию 19.7 и проверяет именно подписанный APK через Android Emulator с KVM. После успешных обязательных проверок создаётся неопубликованный черновик `v19.7`.
+ 
+ Потребуются четыре GitHub Actions Repository Secrets, устанавливаемые только в настройках репозитория владельцем:
+ 
+--- a/apk/apktool.yml
++++ b/apk/apktool.yml
+@@ -9,8 +9,8 @@
+ packageInfo:
+   forcedPackageId: 127
+ versionInfo:
+-  versionCode: '2103107'
+-  versionName: 19.6
++  versionCode: '2103108'
++  versionName: 19.7
+ doNotCompress:
+ - arsc
+ - dex
+--- a/src/com/umedjon/filemanager/FavoritesActivity.java
++++ b/src/com/umedjon/filemanager/FavoritesActivity.java
+@@ -1,11 +1,109 @@
+ package com.umedjon.filemanager;
+-import android.os.*;import android.content.*;import android.view.*;import android.widget.*;import java.util.*;
++import android.os.*;import android.content.*;import android.content.res.ColorStateList;import android.media.MediaMetadata;import android.media.session.*;import android.net.Uri;import android.text.TextUtils;import android.view.*;import android.widget.*;import java.util.*;
+ public final class FavoritesActivity extends ax.V2.c {
+  public boolean isContentClipToPadding(boolean ime){return true;}
+  public void onApplyWindowsInsets(ax.T.b insets,boolean clipped){}
+  List<String[]> tracks=new ArrayList<>();MiniPlayer mini;
+- public void onCreate(Bundle b){Bridge.stat("ax.U2.b","f",this,true);super.onCreate(b);setContentView(Bridge.res(this,"layout","umedjon_favorites"));Bridge.call(this,"onSetContentView",true);setTitle("Избранные треки");mini=new MiniPlayer(this,findViewById(Bridge.res(this,"id","umedjon_favorites_player")));}
+- protected void onResume(){super.onResume();try(FavoriteStore db=new FavoriteStore(this)){tracks=db.all();}ListView l=findViewById(Bridge.res(this,"id","umedjon_favorites_list"));l.setAdapter(new BaseAdapter(){public int getCount(){return tracks.size();}public Object getItem(int p){return tracks.get(p);}public long getItemId(int p){return p;}public View getView(int p,View v,ViewGroup parent){if(v==null)v=getLayoutInflater().inflate(Bridge.res(FavoritesActivity.this,"layout","filelist_item"),parent,false);String[]t=tracks.get(p);TextView name=v.findViewById(Bridge.res(FavoritesActivity.this,"id","filename"));name.setText(t[2]==null||t[2].isEmpty()?android.net.Uri.parse(t[0]).getLastPathSegment():t[2]);ImageView icon=v.findViewById(Bridge.res(FavoritesActivity.this,"id","icon"));int id=Bridge.res(FavoritesActivity.this,"drawable","ic_v_audio");if(id==0)id=android.R.drawable.ic_media_play;icon.setImageResource(id);View container=v.findViewById(Bridge.res(FavoritesActivity.this,"id","item_container"));if(t[0].startsWith("umedjon-missing:")||"missing".equals(t[4])||"ambiguous".equals(t[4]))name.setText(name.getText()+". Файл не найден. Нажмите для восстановления");container.setContentDescription(name.getText());container.setOnClickListener(x->play(p));v.setOnClickListener(x->play(p));return v;}});l.setOnItemClickListener((a,v,p,id)->play(p));TextView empty=findViewById(Bridge.res(this,"id","umedjon_empty"));l.setEmptyView(empty);String focus=getIntent().getStringExtra("umedjon.focus_uri");if(focus!=null){getIntent().removeExtra("umedjon.focus_uri");for(int i=0;i<tracks.size();i++)if(focus.equals(tracks.get(i)[0])){Navigation.focusRow(l,i);break;}}}
++ String currentSource,currentMediaId;int currentState=PlaybackState.STATE_NONE;int playingColor;
++ boolean sourceInFavorites;int mediaIdMatches;
++ static boolean isMissing(String[] t){return t[0].startsWith("umedjon-missing:")||"missing".equals(t[4])||"ambiguous".equals(t[4]);}
++ static boolean sameSource(String first,String second){return !TextUtils.isEmpty(first)&&!TextUtils.isEmpty(second)&&Uri.parse(first).normalizeScheme().equals(Uri.parse(second).normalizeScheme());}
++ void recalculateMatches(){
++  sourceInFavorites=false;mediaIdMatches=0;
++  for(String[] track:tracks)if(!isMissing(track)){
++   if(sameSource(currentSource,track[0]))sourceInFavorites=true;
++   if(!TextUtils.isEmpty(currentMediaId)&&currentMediaId.equals(track[1]))mediaIdMatches++;
++  }
++ }
++ boolean isCurrent(String[] track){
++  if(isMissing(track)||(currentState!=PlaybackState.STATE_PLAYING&&currentState!=PlaybackState.STATE_PAUSED))return false;
++  if(sourceInFavorites)return sameSource(currentSource,track[0]);
++  return mediaIdMatches==1&&!TextUtils.isEmpty(track[1])&&track[1].equals(currentMediaId);
++ }
++ void decorate(View row,String[] track){
++  TextView name=row.findViewById(Bridge.res(this,"id","filename"));
++  ImageView marker=row.findViewById(Bridge.res(this,"id","subicon"));
++  boolean active=isCurrent(track),playing=active&&currentState==PlaybackState.STATE_PLAYING;
++  ColorStateList original=(ColorStateList)row.getTag();
++  name.setTextColor(active?ColorStateList.valueOf(playingColor):original);
++  marker.setVisibility(active?View.VISIBLE:View.GONE);
++  if(active){
++   int icon=Bridge.res(this,"drawable",playing?"ic_play_arrow":"ic_pause");
++   marker.setImageResource(icon==0?(playing?android.R.drawable.ic_media_play:android.R.drawable.ic_media_pause):icon);
++   marker.setColorFilter(playingColor);
++  }else marker.clearColorFilter();
++  marker.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
++  View container=row.findViewById(Bridge.res(this,"id","item_container"));
++  String label=name.getText().toString();
++  if(active)label+=playing?", сейчас воспроизводится":", пауза";
++  container.setContentDescription(label);
++ }
++ void refreshVisibleRows(){
++  ListView list=findViewById(Bridge.res(this,"id","umedjon_favorites_list"));
++  if(list==null)return;
++  int first=list.getFirstVisiblePosition();
++  for(int i=0;i<list.getChildCount()&&first+i<tracks.size();i++){
++   View row=list.getChildAt(i);
++   if(row!=null&&row.getTag() instanceof ColorStateList)decorate(row,tracks.get(first+i));
++  }
++ }
++ void onPlaybackChanged(){
++  android.media.session.MediaController controller=mini==null?null:mini.controller;
++  MediaMetadata metadata=controller==null?null:controller.getMetadata();
++  PlaybackState playback=controller==null?null:controller.getPlaybackState();
++  int state=playback==null?PlaybackState.STATE_NONE:playback.getState();
++  if(state!=PlaybackState.STATE_PLAYING&&state!=PlaybackState.STATE_PAUSED)state=PlaybackState.STATE_NONE;
++  showPlayback(metadata==null?null:metadata.getString("__SOURCE__"),metadata==null?null:metadata.getString(MediaMetadata.METADATA_KEY_MEDIA_ID),state);
++ }
++ // Repaint visible rows only: no adapter replacement, focus movement or scroll reset.
++ void showPlayback(String source,String id,int state){
++  if(state!=PlaybackState.STATE_PLAYING&&state!=PlaybackState.STATE_PAUSED){source=null;id=null;state=PlaybackState.STATE_NONE;}
++  if(TextUtils.equals(currentSource,source)&&TextUtils.equals(currentMediaId,id)&&currentState==state)return;
++  currentSource=source;currentMediaId=id;currentState=state;
++  recalculateMatches();refreshVisibleRows();
++ }
++ public void onCreate(Bundle b){Bridge.stat("ax.U2.b","f",this,true);super.onCreate(b);setContentView(Bridge.res(this,"layout","umedjon_favorites"));Bridge.call(this,"onSetContentView",true);setTitle("Избранные треки");int color=Bridge.res(this,"color","bt_accent");playingColor=color==0?android.graphics.Color.CYAN:getResources().getColor(color);mini=new MiniPlayer(this,findViewById(Bridge.res(this,"id","umedjon_favorites_player")),this::onPlaybackChanged);}
++ protected void onResume(){
++  super.onResume();
++  try(FavoriteStore db=new FavoriteStore(this)){tracks=db.all();}
++  recalculateMatches();
++  ListView list=findViewById(Bridge.res(this,"id","umedjon_favorites_list"));
++  list.setAdapter(new BaseAdapter(){
++   public int getCount(){return tracks.size();}
++   public Object getItem(int p){return tracks.get(p);}
++   public long getItemId(int p){return p;}
++   public View getView(int p,View view,ViewGroup parent){
++    if(view==null){
++     view=getLayoutInflater().inflate(Bridge.res(FavoritesActivity.this,"layout","filelist_item"),parent,false);
++     TextView plain=view.findViewById(Bridge.res(FavoritesActivity.this,"id","filename"));
++     view.setTag(plain.getTextColors());
++    }
++    String[] t=tracks.get(p);
++    TextView name=view.findViewById(Bridge.res(FavoritesActivity.this,"id","filename"));
++    String title=t[2]==null||t[2].isEmpty()?Uri.parse(t[0]).getLastPathSegment():t[2];
++    name.setText(title==null?"Музыка":title);
++    ImageView icon=view.findViewById(Bridge.res(FavoritesActivity.this,"id","icon"));
++    int image=Bridge.res(FavoritesActivity.this,"drawable","ic_v_audio");
++    if(image==0)image=android.R.drawable.ic_media_play;
++    icon.setImageResource(image);
++    View container=view.findViewById(Bridge.res(FavoritesActivity.this,"id","item_container"));
++    if(isMissing(t))name.setText(name.getText()+". Файл не найден. Нажмите для восстановления");
++    container.setOnClickListener(v->play(p));
++    view.setOnClickListener(v->play(p));
++    decorate(view,t);
++    return view;
++   }
++  });
++  list.setOnItemClickListener((a,v,p,id)->play(p));
++  TextView empty=findViewById(Bridge.res(this,"id","umedjon_empty"));
++  list.setEmptyView(empty);
++  onPlaybackChanged();
++  String focus=getIntent().getStringExtra("umedjon.focus_uri");
++  if(focus!=null){
++   getIntent().removeExtra("umedjon.focus_uri");
++   for(int i=0;i<tracks.size();i++)if(focus.equals(tracks.get(i)[0])){Navigation.focusRow(list,i);break;}
++  }
++ }
+  protected void onStart(){super.onStart();mini.start();}
+  protected void onStop(){mini.stop();super.onStop();}
+  public boolean onCreateOptionsMenu(android.view.Menu menu){super.onCreateOptionsMenu(menu);menu.add("Найти отсутствующие файлы").setOnMenuItemClickListener(i->{startActivity(new Intent(this,RelinkActivity.class));return true;});return true;}
+--- a/src/com/umedjon/filemanager/MiniPlayer.java
++++ b/src/com/umedjon/filemanager/MiniPlayer.java
+@@ -2,23 +2,25 @@
+ import android.media.session.MediaController;
+ import android.app.*;import android.content.*;import android.graphics.Bitmap;import android.media.*;import android.media.browse.MediaBrowser;import android.media.session.*;import android.os.*;import android.text.TextUtils;import android.view.*;import android.widget.*;
+ final class MiniPlayer {
+- final Activity activity;final View root;final Handler handler=new Handler(Looper.getMainLooper());MediaBrowser browser;MediaController controller;boolean active;
++ final Activity activity;final View root;final Runnable onPlaybackChanged;final Handler handler=new Handler(Looper.getMainLooper());MediaBrowser browser;MediaController controller;boolean active;
+  final Runnable tick=new Runnable(){public void run(){if(!active)return;render();handler.postDelayed(this,1000);}};
+  final MediaController.Callback callback=new MediaController.Callback(){public void onMetadataChanged(MediaMetadata m){render();}public void onPlaybackStateChanged(PlaybackState p){render();}};
+- MiniPlayer(Activity a,View view){activity=a;root=view;root.setVisibility(View.GONE);
++ MiniPlayer(Activity a,View view){this(a,view,null);}
++ MiniPlayer(Activity a,View view,Runnable onPlaybackChanged){activity=a;root=view;this.onPlaybackChanged=onPlaybackChanged;root.setVisibility(View.GONE);
+   button("play_pause").setOnClickListener(v->{if(controller==null)return;PlaybackState p=controller.getPlaybackState();if(p!=null&&p.getState()==PlaybackState.STATE_PLAYING)controller.getTransportControls().pause();else controller.getTransportControls().play();});
+   button("stop").setOnClickListener(v->{SavedPlayer.closed();if(controller!=null)controller.getTransportControls().stop();root.setVisibility(View.GONE);});
+   button("top_container").setOnClickListener(v->fullscreen());button("album_art").setOnClickListener(v->fullscreen());button("content").setOnClickListener(v->fullscreen());
+  }
+  View button(String id){return root.findViewById(Bridge.res(activity,"id",id));}
+- void start(){active=true;browser=new MediaBrowser(activity,new ComponentName(activity,"com.example.android.uamp.MusicService"),new MediaBrowser.ConnectionCallback(){public void onConnected(){if(!active)return;controller=new MediaController(activity,browser.getSessionToken());activity.setMediaController(controller);controller.registerCallback(callback,handler);SavedPlayer.prepareBound(activity);render();}public void onConnectionSuspended(){controller=null;root.setVisibility(View.GONE);}public void onConnectionFailed(){root.setVisibility(View.GONE);}},null);browser.connect();handler.post(tick);}
++ void start(){active=true;browser=new MediaBrowser(activity,new ComponentName(activity,"com.example.android.uamp.MusicService"),new MediaBrowser.ConnectionCallback(){public void onConnected(){if(!active)return;controller=new MediaController(activity,browser.getSessionToken());activity.setMediaController(controller);controller.registerCallback(callback,handler);SavedPlayer.prepareBound(activity);render();}public void onConnectionSuspended(){controller=null;root.setVisibility(View.GONE);changed();}public void onConnectionFailed(){controller=null;root.setVisibility(View.GONE);changed();}},null);browser.connect();handler.post(tick);}
+  void stop(){active=false;handler.removeCallbacks(tick);if(controller!=null)controller.unregisterCallback(callback);controller=null;if(browser!=null)browser.disconnect();browser=null;}
++ void changed(){if(active&&onPlaybackChanged!=null)onPlaybackChanged.run();}
+  void fullscreen(){activity.startActivity(new Intent().setClassName(activity,"com.alphainventor.filemanager.musicplayer.FullScreenPlayerActivity"));}
+  void text(String id,CharSequence value){TextView t=(TextView)button(id);if(!TextUtils.equals(t.getText(),value))t.setText(value);}
+- void render(){if(!active||controller==null)return;MediaMetadata m=controller.getMetadata();PlaybackState p=controller.getPlaybackState();if(m==null||p==null||!SavedPlayer.wanted(activity)||p.getState()==PlaybackState.STATE_ERROR){root.setVisibility(View.GONE);return;}root.setVisibility(View.VISIBLE);CharSequence title=m.getDescription().getTitle();if(TextUtils.isEmpty(title))title=Playback.prefs(activity).getString("title","Музыка");text("title",title);text("artist",m.getDescription().getSubtitle());
++ void render(){if(!active||controller==null)return;MediaMetadata m=controller.getMetadata();PlaybackState p=controller.getPlaybackState();if(m==null||p==null||!SavedPlayer.wanted(activity)||p.getState()==PlaybackState.STATE_ERROR){root.setVisibility(View.GONE);changed();return;}root.setVisibility(View.VISIBLE);CharSequence title=m.getDescription().getTitle();if(TextUtils.isEmpty(title))title=Playback.prefs(activity).getString("title","Музыка");text("title",title);text("artist",m.getDescription().getSubtitle());
+   boolean playing=p.getState()==PlaybackState.STATE_PLAYING;ImageButton toggle=(ImageButton)button("play_pause");toggle.setImageResource(Bridge.res(activity,"drawable",playing?"ic_pause":"ic_play_arrow"));toggle.setContentDescription(playing?"Пауза":"Воспроизведение");button("top_container").setContentDescription(title+". Открыть полноэкранный плеер");
+   Bitmap art=Artwork.get(activity);ImageView cover=(ImageView)button("album_art");if(art!=null)cover.setImageBitmap(art);else cover.setImageResource(Bridge.res(activity,"drawable","ic_default_art"));cover.setContentDescription("Обложка трека "+title+". Открыть полноэкранный плеер");
+   ProgressBar progress=(ProgressBar)button("play_progress");long duration=m.getLong(MediaMetadata.METADATA_KEY_DURATION),position=p.getPosition();if(playing)position+=(long)((SystemClock.elapsedRealtime()-p.getLastPositionUpdateTime())*p.getPlaybackSpeed());progress.setMax(1000);progress.setProgress(duration<=0?0:(int)Math.min(1000,1000d*position/duration));
+-  button("progress").setVisibility(p.getState()==PlaybackState.STATE_BUFFERING?View.VISIBLE:View.GONE);
++  button("progress").setVisibility(p.getState()==PlaybackState.STATE_BUFFERING?View.VISIBLE:View.GONE);changed();
+  }
+ }
+--- a/src/com/umedjon/filemanager/Playback.java
++++ b/src/com/umedjon/filemanager/Playback.java
+@@ -1,11 +1,15 @@
+ package com.umedjon.filemanager;
+ import android.app.*;import android.content.*;import android.media.*;import android.media.session.*;import android.net.Uri;import android.os.*;import android.util.Pair;import java.util.*;import org.json.*;
+ public final class Playback {
+- static volatile boolean restoring;static Service service;static MediaController controller;static final Handler handler=new Handler(Looper.getMainLooper());static String queueSource;
+- static final Runnable tick=new Runnable(){public void run(){save(false);if(service!=null)handler.postDelayed(this,1000);}};
++ static volatile boolean restoring;static volatile boolean queueEndPending;static Service service;static MediaController controller;static final Handler handler=new Handler(Looper.getMainLooper());static String queueSource;
++ static final Runnable tick=new Runnable(){public void run(){save(false);if(service!=null&&!queueEndPending)handler.postDelayed(this,1000);}};
+  static final MediaController.Callback callback=new MediaController.Callback(){public void onPlaybackStateChanged(PlaybackState p){save(true);}public void onMetadataChanged(MediaMetadata m){queueSource=null;save(true);}};
+  public static void attach(Service s){try{service=s;Object token=Bridge.call(Bridge.call(Bridge.get(s,"r0"),"c"),"e");controller=new MediaController(s,(MediaSession.Token)token);controller.registerCallback(callback,handler);AudioOptions.restore(s);handler.removeCallbacks(tick);handler.post(tick);}catch(Throwable e){android.util.Log.e("UMEDJON","Attach media",e);}}
+- public static void destroyed(Service s){engineSave(true);save(true);handler.removeCallbacks(tick);if(controller!=null)controller.unregisterCallback(callback);controller=null;service=null;queueSource=null;}
++ public static void destroyed(Service s){engineSave(true);save(true);handler.removeCallbacks(tick);if(controller!=null)controller.unregisterCallback(callback);controller=null;service=null;queueSource=null;queueEndPending=false;}
++ /** Only natural exhaustion of the active queue parks the notification. */
++ public static void queueFinished(){queueEndPending=true;handler.removeCallbacks(tick);}
++ public static boolean queueEndPending(){return queueEndPending;}
++ public static void clearQueueEnd(){queueEndPending=false;if(service!=null){handler.removeCallbacks(tick);handler.post(tick);}}
+  static SharedPreferences prefs(Context c){return c.getSharedPreferences("umedjon_playback",0);}
+  static void save(boolean sync){if(restoring||service==null||controller==null)return;try{MediaMetadata d=controller.getMetadata();PlaybackState state=controller.getPlaybackState();if(d==null||state==null)return;String uri=d.getString("__SOURCE__");if(uri==null||uri.isEmpty())return;String expected=prefs(service).getString("restored_uri",null);if(expected!=null){if(!expected.equals(uri))return;prefs(service).edit().remove("restored_uri").apply();}long pos=state.getPosition();if(state.getState()==PlaybackState.STATE_NONE)pos=PlaybackMemory.position(service,uri,d.getString(MediaMetadata.METADATA_KEY_MEDIA_ID));if(state.getState()==PlaybackState.STATE_PLAYING)pos+=(long)((SystemClock.elapsedRealtime()-state.getLastPositionUpdateTime())*state.getPlaybackSpeed());SharedPreferences.Editor e=prefs(service).edit().putString("uri",uri).putString("media_id",d.getString(MediaMetadata.METADATA_KEY_MEDIA_ID)).putString("title",d.getString(MediaMetadata.METADATA_KEY_TITLE)).putString("folder",d.getString("__SOURCE_FOLDER__")).putLong("position",AudioOptions.remember(service)?Math.max(0,pos):0);
+  if(!uri.equals(queueSource)){Artwork.request(service,d,uri);queueSource=uri;}
+@@ -14,8 +18,8 @@
+  if(sync)e.commit();else e.apply();PlayerWidget.update(service);}catch(Throwable e){android.util.Log.e("UMEDJON","Save playback",e);}}
+  public static boolean command(Service s,Intent i){if(i==null)return false;String action=i.getAction();if(action==null||!action.startsWith("com.umedjon.filemanager.player."))return false;if(controller==null)attach(s);try{Bridge.call(Bridge.get(s,"s0"),"l");if(controller==null){idle(s,"Не удалось запустить плеер");return true;}
+   MediaController.TransportControls t=controller.getTransportControls();String cmd=action.substring(action.lastIndexOf('.')+1);if("queue".equals(cmd)){if("favorites".equals(i.getStringExtra("origin")))prefs(s).edit().putString("origin_kind","favorites").apply();else prefs(s).edit().putString("origin_kind","folder").putString("origin_folder",i.getStringExtra("folder")).apply();String[] uris=i.getStringArrayExtra("uris");String[] ids=i.getStringArrayExtra("ids");ArrayList<Pair<Uri,String>>q=new ArrayList<>();for(int x=0;x<uris.length;x++)q.add(Pair.create(Uri.parse(uris[x]),ids==null?uris[x]:ids[x]));Bridge.call(Bridge.stat("ax.W4.a","b"),"d",q);Bundle b=new Bundle();b.putString("PLAY_FOLDER_URI",i.getStringExtra("folder"));t.playFromUri(Uri.parse(uris[i.getIntExtra("index",0)]),b);}
+-  else if("previous".equals(cmd)||"next".equals(cmd)){if(controller.getMetadata()!=null){if("previous".equals(cmd))t.skipToPrevious();else t.skipToNext();}else restore(s,cmd);}else if("close".equals(cmd)){SavedPlayer.closed();engineSave(true);t.stop();s.stopForeground(true);s.stopSelf();}
+-  else if(controller.getMetadata()!=null){PlaybackState state=controller.getPlaybackState();if(state!=null&&state.getState()==PlaybackState.STATE_PLAYING)t.pause();else t.play();}
++  else if("previous".equals(cmd)||"next".equals(cmd)){clearQueueEnd();if(controller.getMetadata()!=null){if("previous".equals(cmd))t.skipToPrevious();else t.skipToNext();}else restore(s,cmd);}else if("close".equals(cmd)){clearQueueEnd();SavedPlayer.closed();engineSave(true);t.stop();s.stopForeground(true);s.stopSelf();}
++  else if(controller.getMetadata()!=null){PlaybackState state=controller.getPlaybackState();if(state!=null&&state.getState()==PlaybackState.STATE_PLAYING)t.pause();else if(queueEndPending||state!=null&&state.getState()==PlaybackState.STATE_STOPPED){clearQueueEnd();restore(s,"toggle");}else{clearQueueEnd();t.play();}}
+   else restore(s,"toggle");
+  }catch(Throwable e){Bridge.error(s,e);idle(s,"Не удалось открыть трек");}return true;}
+ 
+@@ -29,6 +33,7 @@
+  }
+  public static ArrayList<Pair<Uri,String>> prepareQueue(ArrayList<Pair<Uri,String>> list,Uri selected,Bundle extras){try{Context c=service!=null?service:Startup.context;if(c!=null&&selected!=null)return PlaybackMemory.queue(c,list,selected);}catch(Exception e){android.util.Log.e("UMEDJON","Queue bookmark",e);}return list;}
+  public static void beforePlay(Object engine,Object queueItem){try{
++  clearQueueEnd();
+   engineSave(engine,true);if(queueItem==null)return;String full=(String)Bridge.call(Bridge.call(queueItem,"c"),"f");if(full==null)return;String id=(String)Bridge.stat("ax.Y4.c","b",full);if(id==null)return;
+   Object d=Bridge.call(Bridge.get(engine,"m0"),"e",id);if(d==null)return;String uri=(String)Bridge.call(d,"i","__SOURCE__");Context c=(Context)Bridge.get(engine,"q");SavedPlayer.opened(c);prefs(c).edit().remove("restored_uri").apply();EngineBookmark old=engines.get(engine);
+   String current=(String)Bridge.get(engine,"r0");if(!full.equals(current)||old==null||(!AudioOptions.remember(c)&&((Number)Bridge.call(engine,"getState")).intValue()!=2&&((Number)Bridge.call(engine,"getState")).intValue()!=3)){long position=PlaybackMemory.position(c,uri,id);Bridge.call(engine,"e",full,(int)Math.min(Integer.MAX_VALUE,position));}
+--- a/apk/smali/ax/X4/g.smali
++++ b/apk/smali/ax/X4/g.smali
+@@ -1625,6 +1625,8 @@
+     :cond_4
+     const/4 v0, 0x0
+ 
++    invoke-static {}, Lcom/umedjon/filemanager/Playback;->queueFinished()V
++
+     .line 71
+     invoke-virtual {p0, v0}, Lax/X4/g;->A(Ljava/lang/String;)V
+ 
+--- a/apk/smali/ax/V4/d$a.smali
++++ b/apk/smali/ax/V4/d$a.smali
+@@ -234,6 +234,14 @@
+     .line 31
+     if-ne v0, v2, :cond_1
+ 
++    invoke-static {}, Lcom/umedjon/filemanager/Playback;->queueEndPending()Z
++    move-result v0
++    if-eqz v0, :umedjon_normal_notification_stop
++    iget-object p1, p0, Lax/V4/d$a;->d:Lax/V4/d;
++    invoke-virtual {p1}, Lax/V4/d;->l()V
++    return-void
++    :umedjon_normal_notification_stop
++
+     .line 32
+     .line 33
+     iget-object p1, p0, Lax/V4/d$a;->d:Lax/V4/d;
+--- a/apk/smali/com/example/android/uamp/MusicService.smali
++++ b/apk/smali/com/example/android/uamp/MusicService.smali
+@@ -1019,6 +1019,16 @@
+     .line 2
+     invoke-direct {p0, v0, p2}, Lcom/example/android/uamp/MusicService;->M(ZZ)V
+ 
++    if-nez p2, :umedjon_regular_stop
++    invoke-static {}, Lcom/umedjon/filemanager/Playback;->queueEndPending()Z
++    move-result v0
++    if-eqz v0, :umedjon_regular_stop
++    iget-object v0, p0, Lcom/example/android/uamp/MusicService;->t0:Lcom/example/android/uamp/MusicService$b;
++    const/4 v1, 0x0
++    invoke-virtual {v0, v1}, Landroid/os/Handler;->removeCallbacksAndMessages(Ljava/lang/Object;)V
++    return-void
++    :umedjon_regular_stop
++
+     .line 3
+     .line 4
+     .line 5
+--- a/tests/release195/check.py
++++ b/tests/release195/check.py
+@@ -10,8 +10,8 @@
+ class Release195(unittest.TestCase):
+     def test_version(self):
+         conf=(ROOT/'apk/apktool.yml').read_text()
+-        self.assertIn("versionCode: '2103107'",conf)
+-        self.assertIn('versionName: 19.6',conf)
++        self.assertIn("versionCode: '2103108'",conf)
++        self.assertIn('versionName: 19.7',conf)
+     def test_pdf_editor_integrated_save(self):
+         content=read('PdfEditorActivity.java')
+         self.assertNotIn('ACTION_CREATE_DOCUMENT',content)
+--- a/tests/release196/check.py
++++ b/tests/release196/check.py
+@@ -9,8 +9,8 @@
+ class Release196(unittest.TestCase):
+     def test_version_increments_from_public_195(self):
+         config = (ROOT / 'apk/apktool.yml').read_text()
+-        self.assertIn("versionCode: '2103107'", config)
+-        self.assertIn('versionName: 19.6', config)
++        self.assertIn("versionCode: '2103108'", config)
++        self.assertIn('versionName: 19.7', config)
+ 
+     def test_dialog_dismisses_only_after_successful_launch(self):
+         source = (SRC / 'PhotoPdfProgressDialog.java').read_text()
+--- /dev/null
++++ b/scripts/emulator-test-197.sh
+@@ -0,0 +1,78 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
++tool_dir="$RUNNER_TEMP/umedjon-emulator-197"
++mkdir -p "$tool_dir/classes" "$tool_dir/dex" "$tool_dir/logs"
++test_apk="$tool_dir/Favorites-Regression-Test.apk"
++signed_apk="$project_dir/output/File-Manager-UMEDJON-19.7.apk"
++android_jar="$ANDROID_HOME/platforms/android-35/android.jar"
++build_tools="$ANDROID_HOME/build-tools/35.0.0"
++
++test -e /dev/kvm
++test -r /dev/kvm
++test -w /dev/kvm
++test -f "$android_jar"
++test -s "$signed_apk"
++sha256sum "$signed_apk" | tee "$tool_dir/logs/tested-apk-sha256.txt"
++"$build_tools/apksigner" verify --verbose --print-certs "$signed_apk" | tee "$tool_dir/logs/signed-apk-verification.txt"
++grep -F '6259589d30dcf7fb984b1f973ed50c7e2a32372a0eb05c13efaa2cbac554a899' "$tool_dir/logs/signed-apk-verification.txt"
++
++javac -source 8 -target 8 -encoding UTF-8 -cp "$android_jar" -d "$tool_dir/classes" "$project_dir/tests/emulator197/FavoritesInstrumentation.java"
++jar cf "$tool_dir/instrumentation.jar" -C "$tool_dir/classes" .
++java -cp "$project_dir/toolchain/sdk/android-15/lib/d8.jar" com.android.tools.r8.D8 --min-api 21 --lib "$android_jar" --output "$tool_dir/dex" "$tool_dir/instrumentation.jar"
++"$build_tools/aapt2" link -I "$android_jar" --manifest "$project_dir/tests/emulator197/AndroidManifest.xml" -o "$tool_dir/test-unsigned.apk"
++python3 - "$tool_dir/test-unsigned.apk" "$tool_dir/dex/classes.dex" <<'PY'
++import sys,zipfile
++with zipfile.ZipFile(sys.argv[1],'a') as z:
++    z.write(sys.argv[2],'classes.dex',compress_type=zipfile.ZIP_DEFLATED)
++PY
++"$build_tools/zipalign" -f -p 4 "$tool_dir/test-unsigned.apk" "$tool_dir/test-aligned.apk"
++keytool -genkeypair -keystore "$tool_dir/test.jks" -storepass testpass -keypass testpass \
++  -alias emulator -keyalg RSA -keysize 2048 -validity 2 -dname 'CN=UMEDJON emulator test' -noprompt >/dev/null 2>&1
++"$build_tools/apksigner" sign --ks "$tool_dir/test.jks" --ks-pass pass:testpass \
++  --key-pass pass:testpass --ks-key-alias emulator --out "$test_apk" "$tool_dir/test-aligned.apk"
++
++adb wait-for-device
++boot="$(adb shell getprop sys.boot_completed | tr -d '\r')"
++test "$boot" = 1
++adb shell getprop ro.build.version.sdk | tee "$tool_dir/logs/emulator-sdk.txt"
++adb shell getprop ro.product.cpu.abi | tee "$tool_dir/logs/emulator-abi.txt"
++adb shell settings put system font_scale 1.5
++
++mkdir -p "$tool_dir/previous"
++gh release download v19.6 --repo UMEDJON12/file-manager-umedjon-updates \
++  --pattern File-Manager-UMEDJON-19.6.apk --dir "$tool_dir/previous"
++previous_apk="$tool_dir/previous/File-Manager-UMEDJON-19.6.apk"
++echo 'dd1087b38cd0e8a74cadfe1d771de32d9a21a9be683c1943bcfc8089e09a0960  '"$previous_apk" | sha256sum -c -
++adb install "$previous_apk"
++adb shell pm grant com.umedjon.filemanager android.permission.POST_NOTIFICATIONS
++adb shell monkey -p com.umedjon.filemanager 1 | tee "$tool_dir/logs/start-196.txt"
++adb install "$test_apk"
++
++run_instrument() {
++  local mode="$1" output="$tool_dir/logs/instrument-$1.txt"
++  adb shell am instrument -w -r -e mode "$mode" \
++    com.umedjon.filemanager.test/com.umedjon.filemanager.test.FavoritesInstrumentation | tee "$output"
++  grep -F 'EMULATOR_TEST_PASS' "$output"
++  grep -F 'INSTRUMENTATION_CODE: -1' "$output"
++}
++run_instrument seed
++adb shell am force-stop com.umedjon.filemanager
++adb install -r "$signed_apk" | tee "$tool_dir/logs/upgrade.txt"
++adb shell dumpsys package com.umedjon.filemanager | grep -m 1 'versionCode=2103108'
++adb shell monkey -p com.umedjon.filemanager 1 | tee "$tool_dir/logs/start-197.txt"
++run_instrument verify
++run_instrument queue_end
++adb shell uiautomator dump /sdcard/window.xml || true
++adb pull /sdcard/window.xml "$tool_dir/logs/window.xml" || true
++adb shell screencap -p /sdcard/umedjon-final.png || true
++adb pull /sdcard/umedjon-final.png "$tool_dir/logs/final.png" || true
++adb logcat -d -b main -b crash > "$tool_dir/logs/logcat.txt"
++if grep -En 'Process: com.umedjon.filemanager|ANR in com.umedjon.filemanager' "$tool_dir/logs/logcat.txt" > "$tool_dir/logs/crashes.txt"; then
++  echo 'Android runtime crash or ANR found; inspect crashes.txt' >&2
++  exit 1
++fi
++sha256sum -c "$tool_dir/logs/tested-apk-sha256.txt"
++echo 'ALL_EMULATOR_TESTS_PASSED'
++touch "$tool_dir/logs/emulator-ok"
+--- /dev/null
++++ b/tests/release197/check.py
+@@ -0,0 +1,80 @@
++"""Release 19.7 regression checks. Android behavioral tests run in GitHub Actions."""
++from pathlib import Path
++import unittest
++
++ROOT=Path(__file__).resolve().parents[2]
++SOURCE=(ROOT/"src/com/umedjon/filemanager/FavoritesActivity.java").read_text()
++MINI=(ROOT/"src/com/umedjon/filemanager/MiniPlayer.java").read_text()
++PLAYBACK=(ROOT/"src/com/umedjon/filemanager/Playback.java").read_text()
++
++
++class Favorites197(unittest.TestCase):
++    def test_version(self):
++        data=(ROOT/"apk/apktool.yml").read_text()
++        self.assertIn("versionCode: '2103108'",data)
++        self.assertIn("versionName: 19.7",data)
++
++    def test_real_identity_not_title(self):
++        self.assertIn('sameSource(currentSource,track[0])',SOURCE)
++        self.assertIn('currentMediaId.equals(track[1])',SOURCE)
++        self.assertIn('mediaIdMatches==1',SOURCE)
++        self.assertNotIn('currentSource.equals(track[2])',SOURCE)
++
++    def test_pause_and_stop_states(self):
++        self.assertIn('PlaybackState.STATE_PAUSED',SOURCE)
++        self.assertIn('PlaybackState.STATE_PLAYING',SOURCE)
++        self.assertIn('marker.setVisibility(active?View.VISIBLE:View.GONE)',SOURCE)
++        self.assertIn('playing?"ic_play_arrow":"ic_pause"',SOURCE)
++
++    def test_accessibility_descriptions(self):
++        self.assertIn('сейчас воспроизводится',SOURCE)
++        self.assertIn(', пауза',SOURCE)
++        self.assertIn('View.IMPORTANT_FOR_ACCESSIBILITY_NO',SOURCE)
++
++    def test_no_adapter_reset_on_player_callback(self):
++        start=SOURCE.index('void showPlayback(')
++        end=SOURCE.index('protected void onResume()',start)
++        self.assertIn('refreshVisibleRows()',SOURCE[start:end])
++        self.assertNotIn('setAdapter(',SOURCE[start:end])
++        self.assertNotIn('notifyDataSetChanged(',SOURCE[start:end])
++
++    def test_real_media_session_callback(self):
++        self.assertIn('this::onPlaybackChanged',SOURCE)
++        self.assertIn('getMetadata()',SOURCE)
++        self.assertIn('getPlaybackState()',SOURCE)
++        self.assertIn('onMetadataChanged(MediaMetadata m){render();}',MINI)
++        self.assertIn('onPlaybackStateChanged(PlaybackState p){render();}',MINI)
++        self.assertIn('if(active&&onPlaybackChanged!=null)onPlaybackChanged.run()',MINI)
++
++    def test_emulator_hard_gate_present(self):
++        script=(ROOT/"scripts/emulator-test-197.sh").read_text()
++        self.assertIn('test -w /dev/kvm',script)
++        self.assertIn('adb install -r "$signed_apk"',script)
++        self.assertIn("EMULATOR_TEST_PASS",script)
++        self.assertIn('sha256sum -c "$tool_dir/logs/tested-apk-sha256.txt"',script)
++        test=(ROOT/"tests/emulator197/FavoritesInstrumentation.java").read_text()
++        self.assertIn('real audio playback',test)
++        self.assertIn('real paused state',test)
++        self.assertIn('settings persisted after signed upgrade',test)
++
++    def test_queue_end_keeps_notification_until_explicit_close(self):
++        manager=(ROOT/'apk/smali/ax/X4/g.smali').read_text()
++        service=(ROOT/'apk/smali/com/example/android/uamp/MusicService.smali').read_text()
++        callback=(ROOT/'apk/smali/ax/V4/d$a.smali').read_text()
++        self.assertIn('Playback;->queueFinished()V',manager)
++        self.assertIn('Playback;->queueEndPending()Z',service)
++        self.assertIn('Playback;->queueEndPending()Z',callback)
++        self.assertIn('invoke-virtual {p1}, Lax/V4/d;->l()V',callback)
++        self.assertIn('clearQueueEnd();SavedPlayer.closed()',PLAYBACK)
++
++    def test_ten_track_end_emulator_scenario(self):
++        script=(ROOT/'scripts/emulator-test-197.sh').read_text()
++        instrument=(ROOT/'tests/emulator197/FavoritesInstrumentation.java').read_text()
++        self.assertIn('run_instrument queue_end',script)
++        self.assertIn('String[] sources=new String[10]',instrument)
++        self.assertIn('notification survives delayed stop deadline',instrument)
++        self.assertIn('explicit close removes panel',instrument)
++
++
++if __name__=="__main__":
++    unittest.main()
+--- /dev/null
++++ b/tests/emulator197/AndroidManifest.xml
+@@ -0,0 +1,10 @@
++<?xml version="1.0" encoding="utf-8"?>
++<manifest xmlns:android="http://schemas.android.com/apk/res/android"
++    package="com.umedjon.filemanager.test">
++    <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="28"/>
++    <application android:label="UMEDJON emulator regression tests"/>
++    <instrumentation
++        android:name="com.umedjon.filemanager.test.FavoritesInstrumentation"
++        android:targetPackage="com.umedjon.filemanager"
++        android:functionalTest="true"/>
++</manifest>
+--- /dev/null
++++ b/tests/emulator197/FavoritesInstrumentation.java
+@@ -0,0 +1,255 @@
++package com.umedjon.filemanager.test;
++
++import android.app.Activity;
++import android.app.Instrumentation;
++import android.app.NotificationManager;
++import android.content.Context;
++import android.content.Intent;
++import android.database.sqlite.SQLiteDatabase;
++import android.media.MediaMetadata;
++import android.media.session.MediaController;
++import android.media.session.PlaybackState;
++import android.net.Uri;
++import android.os.Bundle;
++import android.os.SystemClock;
++import android.service.notification.StatusBarNotification;
++import android.view.View;
++import android.widget.ImageView;
++import android.widget.ListView;
++import android.widget.TextView;
++import java.io.File;
++import java.io.FileOutputStream;
++import java.io.IOException;
++import java.lang.reflect.Method;
++import java.nio.ByteBuffer;
++import java.nio.ByteOrder;
++import java.util.concurrent.Callable;
++import java.util.concurrent.atomic.AtomicReference;
++
++/** Executes inside the real release app, on a GitHub Actions Android emulator. */
++public final class FavoritesInstrumentation extends Instrumentation {
++ private static final String APP="com.umedjon.filemanager";
++ private static final String FAVORITES="com.umedjon.filemanager.FavoritesActivity";
++ private static final String TOKEN="preserved-user-data-19.6-to-19.7";
++ private int checks;
++ private Context target;
++ private Activity favorites;
++ private ListView list;
++ private int accent;
++ private String uriOne,uriTwo;
++
++ @Override public void onCreate(Bundle arguments){
++  super.onCreate(arguments);
++  Bundle args=arguments==null?new Bundle():arguments;
++  new Thread(()->{
++   Bundle result=new Bundle();
++   try{
++    target=getTargetContext();
++    if("seed".equals(args.getString("mode"))){
++     target.getSharedPreferences("umedjon_upgrade_probe",0).edit().putString("sentinel",TOKEN).commit();
++     check(TOKEN.equals(target.getSharedPreferences("umedjon_upgrade_probe",0).getString("sentinel","")),"seed upgrade marker");
++    }else if("queue_end".equals(args.getString("mode"))){
++     verifyCompletedQueueNotification();
++    }else{
++     runScenarios();
++    }
++    result.putString("stream","EMULATOR_TEST_PASS: "+checks+" assertions");
++    finish(Activity.RESULT_OK,result);
++   }catch(Throwable failure){
++    android.util.Log.e("UMEDJON_EMULATOR_TEST","EMULATOR_TEST_FAILURE",failure);
++    result.putString("stream","EMULATOR_TEST_FAILURE: "+failure.toString());
++    finish(Activity.RESULT_CANCELED,result);
++   }
++  },"umedjon-emulator-regression").start();
++ }
++ private void check(boolean condition,String message){
++  checks++;
++  if(!condition)throw new AssertionError(message);
++ }
++ private int id(String name){return target.getResources().getIdentifier(name,"id",APP);}
++ private <T> T ui(Callable<T> task){
++  AtomicReference<T> value=new AtomicReference<>();
++  AtomicReference<Throwable> error=new AtomicReference<>();
++  runOnMainSync(()->{try{value.set(task.call());}catch(Throwable t){error.set(t);}});
++  if(error.get()!=null)throw new AssertionError(error.get());
++  return value.get();
++ }
++ private void waitFor(String description,Callable<Boolean> condition,long timeoutMs){
++  long deadline=SystemClock.uptimeMillis()+timeoutMs;
++  while(SystemClock.uptimeMillis()<deadline){
++   if(Boolean.TRUE.equals(ui(condition)))return;
++   SystemClock.sleep(200);
++  }
++  throw new AssertionError("Timed out: "+description);
++ }
++ private File wav(String name)throws IOException{return wav(name,25);}
++ private File wav(String name,int seconds)throws IOException{
++  File file=new File(target.getFilesDir(),name);
++  int frames=8000*seconds,dataLength=frames*2;
++  ByteBuffer header=ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN);
++  header.put(new byte[]{'R','I','F','F'}).putInt(36+dataLength);
++  header.put(new byte[]{'W','A','V','E','f','m','t',' '}).putInt(16);
++  header.putShort((short)1).putShort((short)1).putInt(8000).putInt(16000);
++  header.putShort((short)2).putShort((short)16);
++  header.put(new byte[]{'d','a','t','a'}).putInt(dataLength);
++  try(FileOutputStream out=new FileOutputStream(file)){
++   out.write(header.array());
++   byte[] sample=new byte[4096];
++   for(int bytes=dataLength;bytes>0;bytes-=Math.min(sample.length,bytes))out.write(sample,0,Math.min(sample.length,bytes));
++   out.getFD().sync();
++  }
++  return file;
++ }
++ private void insert(SQLiteDatabase db,String uri,String mediaId,String title,int added){
++  db.execSQL("INSERT INTO favorites(uri,media_id,title,folder,added,sort_order) VALUES(?,?,?,?,?,?)",
++   new Object[]{uri,mediaId,title,"file:///data/user/0/"+APP+"/files",added,added*1000L});
++ }
++ private void seedFavorites()throws IOException{
++  File one=wav("fav-one.wav"),two=wav("fav-two.wav");
++  uriOne=Uri.fromFile(one).toString();uriTwo=Uri.fromFile(two).toString();
++  target.deleteDatabase("umedjon_favorites.db");
++  try(SQLiteDatabase db=target.openOrCreateDatabase("umedjon_favorites.db",Context.MODE_PRIVATE,null)){
++   db.execSQL("CREATE TABLE favorites(uri TEXT PRIMARY KEY,media_id TEXT,title TEXT,folder TEXT,added INTEGER NOT NULL,logical_id TEXT,record TEXT,status TEXT,sort_order INTEGER)");
++   db.execSQL("PRAGMA user_version=3");
++   for(int i=0;i<26;i++)insert(db,Uri.fromFile(new File(target.getFilesDir(),"unused-"+i+".wav")).toString(),"other-"+i,"Другая композиция "+i,100+i);
++   // Equal display titles must not be used to decide which row is active.
++   insert(db,uriOne,"unique-media-one","Модар",1000);
++   insert(db,uriTwo,"unique-media-two","Модар",999);
++  }
++ }
++ private View row(int position){
++  int first=list.getFirstVisiblePosition();
++  if(position<first||position>=first+list.getChildCount())return null;
++  return list.getChildAt(position-first);
++ }
++ private TextView title(int position){View row=row(position);return row==null?null:(TextView)row.findViewById(id("filename"));}
++ private ImageView marker(int position){View row=row(position);return row==null?null:(ImageView)row.findViewById(id("subicon"));}
++ private CharSequence description(int position){
++  View row=row(position);return row==null?null:row.findViewById(id("item_container")).getContentDescription();
++ }
++ private void show(String uri,String mediaId,int state){
++  ui(()->{
++   Method method=favorites.getClass().getDeclaredMethod("showPlayback",String.class,String.class,int.class);
++   method.setAccessible(true);
++   method.invoke(favorites,uri,mediaId,state);
++   return null;
++  });
++ }
++ private void verifyRow(int position,boolean highlighted,String spoken){
++  check(ui(()->title(position)!=null),"visible row "+position);
++  check(ui(()->highlighted?(title(position).getCurrentTextColor()==accent):(title(position).getCurrentTextColor()!=accent)),
++   "row tint "+position);
++  check(ui(()->(marker(position).getVisibility()==View.VISIBLE)==highlighted),"play/pause icon "+position);
++  check(ui(()->{
++   CharSequence d=description(position);
++   return d!=null&&(spoken==null?!d.toString().contains("воспроизводится")&&!d.toString().contains("пауза"):d.toString().contains(spoken));
++  }),"screen reader description "+position);
++ }
++ private MediaController controller(){
++  return favorites.getMediaController();
++ }
++ private boolean playerNotificationVisible(){
++  NotificationManager manager=(NotificationManager)target.getSystemService(Context.NOTIFICATION_SERVICE);
++  for(StatusBarNotification n:manager.getActiveNotifications())if(n.getId()==412&&APP.equals(n.getPackageName()))return true;
++  return false;
++ }
++ private void verifyCompletedQueueNotification()throws Exception{
++  String[] sources=new String[10],ids=new String[10];
++  for(int i=0;i<10;i++){
++   File track=wav("queue-end-"+i+".wav",1);
++   sources[i]=Uri.fromFile(track).toString();ids[i]="queue-"+i;
++  }
++  String last=sources[9];
++  Intent launch=new Intent(Intent.ACTION_MAIN).setClassName(target,FAVORITES).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
++  favorites=startActivitySync(launch);
++  waitFor("media controller bound",()->controller()!=null,15000);
++  Intent queue=new Intent("com.umedjon.filemanager.player.queue").setClassName(target,"com.example.android.uamp.MusicService");
++  queue.putExtra("uris",sources).putExtra("ids",ids);
++  queue.putExtra("index",0).putExtra("origin","folder").putExtra("folder",target.getFilesDir().getAbsolutePath());
++  queue.putExtra("START_FOREGROUND",true);
++  target.startForegroundService(queue);
++  waitFor("first short track begins",()->controller()!=null&&controller().getPlaybackState()!=null&&controller().getPlaybackState().getState()==PlaybackState.STATE_PLAYING,15000);
++  waitFor("tenth track naturally finishes",()->{
++   MediaController c=controller();
++   return c!=null&&c.getMetadata()!=null&&last.equals(c.getMetadata().getString("__SOURCE__"))&&
++    c.getPlaybackState()!=null&&c.getPlaybackState().getState()==PlaybackState.STATE_STOPPED;
++  },25000);
++  check(playerNotificationVisible(),"notification stays after last track ends");
++  SystemClock.sleep(35000); // Detect old 30-second delayed service shutdown.
++  check(playerNotificationVisible(),"notification survives delayed stop deadline");
++  Intent close=new Intent("com.umedjon.filemanager.player.close").setClassName(target,"com.example.android.uamp.MusicService");
++  close.putExtra("START_FOREGROUND",true);
++  target.startForegroundService(close);
++  waitFor("explicit close removes panel",()->!playerNotificationVisible(),10000);
++  ui(()->{favorites.finish();return null;});
++ }
++ private void runScenarios()throws Exception{
++  check(TOKEN.equals(target.getSharedPreferences("umedjon_upgrade_probe",0).getString("sentinel","")),
++   "settings persisted after signed upgrade");
++  seedFavorites();
++  Intent intent=new Intent(Intent.ACTION_MAIN).setClassName(target,FAVORITES);
++  intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
++  favorites=startActivitySync(intent);
++  check(favorites!=null,"favorites Activity started");
++  list=ui(()->(ListView)favorites.findViewById(id("umedjon_favorites_list")));
++  check(list!=null,"favorites ListView exists");
++  waitFor("populated favorites",()->list.getChildCount()>1,10000);
++  check(ui(()->list.getAdapter().getCount())==28,"all favorites shown");
++  accent=target.getResources().getColor(target.getResources().getIdentifier("bt_accent","color",APP));
++  show(uriOne,"unique-media-one",PlaybackState.STATE_PLAYING);
++  verifyRow(0,true,"Модар, сейчас воспроизводится");
++  verifyRow(1,false,null);
++  show(uriTwo,"unique-media-two",PlaybackState.STATE_PLAYING);
++  verifyRow(0,false,null);
++  verifyRow(1,true,"Модар, сейчас воспроизводится");
++  show(uriTwo,"unique-media-two",PlaybackState.STATE_PAUSED);
++  verifyRow(1,true,"Модар, пауза");
++  show(uriTwo,"unique-media-two",PlaybackState.STATE_STOPPED);
++  verifyRow(0,false,null);
++  verifyRow(1,false,null);
++  // Distinct source URI, but unambiguous stable media ID for the same file.
++  show("content://external/alternative-copy","unique-media-one",PlaybackState.STATE_PLAYING);
++  verifyRow(0,true,"сейчас воспроизводится");
++  verifyRow(1,false,null);
++  show("content://external/alternative-copy","other-7",PlaybackState.STATE_PLAYING);
++  verifyRow(0,false,null);
++  verifyRow(1,false,null);
++  ui(()->{list.setSelectionFromTop(10,0);return null;});
++  waitFor("scrolled list",()->list.getFirstVisiblePosition()>=9,5000);
++  int first=ui(()->list.getFirstVisiblePosition());
++  show(uriOne,"unique-media-one",PlaybackState.STATE_PLAYING);
++  check(ui(()->list.getFirstVisiblePosition())==first,"scroll preserved after playback update");
++  show(null,null,PlaybackState.STATE_NONE);
++  // Use the real player and real files, not only simulated UI state.
++  ui(()->{list.setSelectionFromTop(0,0);return null;});
++  waitFor("first audio row",()->row(0)!=null,5000);
++  waitFor("real MediaController connected",()->controller()!=null,15000);
++  ui(()->{list.performItemClick(row(0),0,0);return null;});
++  waitFor("real audio playback",()->{
++   MediaController c=controller();
++   if(c==null||c.getMetadata()==null||c.getPlaybackState()==null)return false;
++   String source=c.getMetadata().getString("__SOURCE__");
++   int state=c.getPlaybackState().getState();
++   return uriOne.equals(source)&&state==PlaybackState.STATE_PLAYING;
++  },20000);
++  waitFor("real playback indicator",()->title(0)!=null&&title(0).getCurrentTextColor()==accent,5000);
++  verifyRow(0,true,"сейчас воспроизводится");
++  ui(()->{list.performItemClick(row(1),1,1);return null;});
++  waitFor("second real audio playback",()->{
++   MediaController c=controller();
++   return c!=null&&c.getMetadata()!=null&&uriTwo.equals(c.getMetadata().getString("__SOURCE__"))&&c.getPlaybackState()!=null&&c.getPlaybackState().getState()==PlaybackState.STATE_PLAYING;
++  },20000);
++  verifyRow(0,false,null);
++  verifyRow(1,true,"сейчас воспроизводится");
++  ui(()->{controller().getTransportControls().pause();return null;});
++  waitFor("real paused state",()->controller().getPlaybackState()!=null&&controller().getPlaybackState().getState()==PlaybackState.STATE_PAUSED,10000);
++  verifyRow(1,true,"пауза");
++  ui(()->{controller().getTransportControls().stop();return null;});
++  waitFor("real stopped state",()->{
++   PlaybackState p=controller().getPlaybackState();
++   return p!=null&&p.getState()!=PlaybackState.STATE_PLAYING&&p.getState()!=PlaybackState.STATE_PAUSED;
++  },10000);
++  verifyRow(0,false,null);verifyRow(1,false,null);
++  ui(()->{favorites.finish();return null;});
++ }
++}
