@@ -737,7 +737,7 @@
 +</manifest>
 --- /dev/null
 +++ b/tests/emulator197/FavoritesInstrumentation.java
-@@ -0,0 +1,270 @@
+@@ -0,0 +1,272 @@
 +package com.umedjon.filemanager.test;
 +
 +import android.app.Activity;
@@ -893,10 +893,12 @@
 +  check(highlighted?visibleColor==accent:visibleColor!=accent,
 +   "row tint "+position+" actual="+Integer.toHexString(visibleColor)+" expected accent="+Integer.toHexString(accent));
 +  check(ui(()->(marker(position).getVisibility()==View.VISIBLE)==highlighted),"play/pause icon "+position);
-+  check(ui(()->{
++  String actualDescription=ui(()->{
 +   CharSequence d=description(position);
-+   return d!=null&&(spoken==null?!d.toString().contains("воспроизводится")&&!d.toString().contains("пауза"):d.toString().contains(spoken));
-+  }),"screen reader description "+position);
++   return d==null?"(null)":d.toString();
++  });
++  check(spoken==null?!actualDescription.contains("воспроизводится")&&!actualDescription.contains("пауза"):
++    actualDescription.contains(spoken),"screen reader description "+position+" actual='"+actualDescription+"' expected='"+spoken+"'");
 + }
 + private MediaController controller(){
 +  return favorites.getMediaController();
