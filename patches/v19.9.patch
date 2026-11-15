@@ -165,8 +165,8 @@
  - arsc
  - dex
 --- a/scripts/emulator-test-199.sh	1970-01-01 06:00:00.000000000 +0600
-+++ b/scripts/emulator-test-199.sh	2026-11-15 23:38:36.438012203 +0500
-@@ -0,0 +1,90 @@
++++ b/scripts/emulator-test-199.sh	2026-11-15 23:54:24.843406797 +0500
+@@ -0,0 +1,91 @@
 +#!/usr/bin/env bash
 +set -euo pipefail
 +
@@ -238,6 +238,7 @@
 +run_favorites seed
 +adb shell am force-stop com.umedjon.filemanager
 +adb install -r "$signed_apk" | tee "$tool_dir/logs/upgrade.txt"
++adb shell appops set com.umedjon.filemanager MANAGE_EXTERNAL_STORAGE allow
 +adb shell dumpsys package com.umedjon.filemanager | grep -m 1 'versionCode=2103110'
 +adb shell monkey -p com.umedjon.filemanager 1 | tee "$tool_dir/logs/start-199.txt"
 +run_favorites verify
@@ -356,8 +357,8 @@
 +        android:functionalTest="true"/>
 +</manifest>
 --- a/tests/emulator199/NavigationInstrumentation.java	1970-01-01 06:00:00.000000000 +0600
-+++ b/tests/emulator199/NavigationInstrumentation.java	2026-11-15 23:47:22.792081750 +0500
-@@ -0,0 +1,236 @@
++++ b/tests/emulator199/NavigationInstrumentation.java	2026-11-15 23:54:31.447336007 +0500
+@@ -0,0 +1,238 @@
 +package com.umedjon.filemanager.test;
 +
 +import android.app.*;
@@ -429,7 +430,9 @@
 +  throw new AssertionError("Timeout: "+label);
 + }
 + private File wav(String name)throws Exception{
-+  File file=new File(context.getFilesDir(),name);
++  File dir=new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),"umedjon-navigation-regression");
++  ok(dir.isDirectory()||dir.mkdirs(),"test music folder is accessible");
++  File file=new File(dir,name);
 +  int length=8000*280*2;
 +  ByteBuffer head=ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN);
 +  head.put(new byte[]{'R','I','F','F'}).putInt(36+length);
@@ -466,7 +469,7 @@
 +     new Object[]{dummy,"dummy-"+n,"Другая композиция "+n,context.getFilesDir().getAbsolutePath(),1000-n,1000L-n});
 +   }
 +   db.execSQL("INSERT INTO favorites(uri,media_id,title,folder,added,sort_order) VALUES(?,?,?,?,?,?)",
-+    new Object[]{uri,"source-nav-track","Модар",context.getFilesDir().getAbsolutePath(),900,900});
++   new Object[]{uri,"source-nav-track","Модар",Uri.fromFile(new File(Uri.parse(uri).getPath()).getParentFile()).toString(),900,900});
 +  }
 + }
 + private Activity launchFavorites(){
@@ -481,7 +484,7 @@
 +   .setClassName(context,"com.example.android.uamp.MusicService");
 +  start.putExtra("uris",new String[]{sourceUri}).putExtra("ids",new String[]{"source-nav-track"})
 +   .putExtra("index",0).putExtra("origin",origin)
-+   .putExtra("folder",context.getFilesDir().getAbsolutePath())
++   .putExtra("folder",Uri.fromFile(file.getParentFile()).toString())
 +   .putExtra("START_FOREGROUND",true);
 +  context.startForegroundService(start);
 +  await(origin+" live audio",()->{
