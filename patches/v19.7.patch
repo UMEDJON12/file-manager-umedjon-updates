@@ -68,7 +68,7 @@
            PY
            java -jar "$RUNNER_TEMP/project/UMEDJON-Source/toolchain/sdk/android-15/lib/apksigner.jar" verify --verbose "$APK"
            sha256sum "$APK"
-@@ -97,39 +100,70 @@
+@@ -97,39 +100,68 @@
        - name: Upload verified APK as workflow artifact
          uses: actions/upload-artifact@v4
          with:
@@ -82,9 +82,7 @@
 +      - name: Enable KVM for Android Emulator
 +        run: |
 +          test -e /dev/kvm
-+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-+          sudo udevadm control --reload-rules
-+          sudo udevadm trigger --name-match=kvm
++          sudo chmod a+rw /dev/kvm
 +          test -w /dev/kvm
 +
 +      - name: Test signed APK in GitHub Android Emulator (API 35, KVM)
