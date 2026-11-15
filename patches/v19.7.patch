@@ -555,13 +555,14 @@
          source = (SRC / 'PhotoPdfProgressDialog.java').read_text()
 --- /dev/null
 +++ b/scripts/emulator-test-197.sh
-@@ -0,0 +1,78 @@
+@@ -0,0 +1,79 @@
 +#!/usr/bin/env bash
 +set -euo pipefail
 +
 +project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 +tool_dir="$RUNNER_TEMP/umedjon-emulator-197"
 +mkdir -p "$tool_dir/classes" "$tool_dir/dex" "$tool_dir/logs"
++trap 'adb logcat -d -b main -b system -b crash > "$tool_dir/logs/logcat-on-exit.txt" 2>&1 || true' EXIT
 +test_apk="$tool_dir/Favorites-Regression-Test.apk"
 +signed_apk="$project_dir/output/File-Manager-UMEDJON-19.7.apk"
 +android_jar="$ANDROID_HOME/platforms/android-35/android.jar"
