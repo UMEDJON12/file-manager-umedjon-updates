@@ -451,8 +451,8 @@
 +        android:functionalTest="true"/>
 +</manifest>
 --- a/tests/emulator199/NavigationInstrumentation.java	1970-01-01 06:00:00.000000000 +0600
-+++ b/tests/emulator199/NavigationInstrumentation.java	2026-11-16 01:13:14.458230600 +0500
-@@ -0,0 +1,370 @@
++++ b/tests/emulator199/NavigationInstrumentation.java	2026-11-16 01:18:47.262520874 +0500
+@@ -0,0 +1,382 @@
 +package com.umedjon.filemanager.test;
 +
 +import android.app.*;
@@ -733,7 +733,19 @@
 +  await(label+" real media notification",()->notification()!=null,15000);
 +  long before=playback.getPlaybackState().getPosition();String original=currentSource();Object owner=service();
 +  Activity previous=resumed;
-+  notification().send();
++  // MediaStyle notifications are refreshed as the engine advances. A stored
++  // PendingIntent from just before a refresh can already be canceled; tap the
++  // currently displayed notification and retry when that race is observed.
++  boolean sent=false;
++  for(int attempt=0;attempt<12;attempt++){
++   PendingIntent latest=notification();
++   if(latest!=null){
++    try{latest.send();sent=true;break;}
++    catch(PendingIntent.CanceledException expired){}
++   }
++   SystemClock.sleep(90);
++  }
++  ok(sent,label+" has a usable notification action");
 +  // The legacy media notification launches LaunchActivity, which routes to
 +  // MainActivity on this emulator. Some navigation stacks then open the full
 +  // player. In either case, testing the actual notification PendingIntent is
