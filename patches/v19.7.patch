@@ -737,7 +737,7 @@
 +</manifest>
 --- /dev/null
 +++ b/tests/emulator197/FavoritesInstrumentation.java
-@@ -0,0 +1,272 @@
+@@ -0,0 +1,275 @@
 +package com.umedjon.filemanager.test;
 +
 +import android.app.Activity;
@@ -914,7 +914,6 @@
 +   File track=wav("queue-end-"+i+".wav",1);
 +   sources[i]=Uri.fromFile(track).toString();ids[i]="queue-"+i;
 +  }
-+  String last=sources[9];
 +  Intent launch=new Intent(Intent.ACTION_MAIN).setClassName(target,FAVORITES).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
 +  favorites=startActivitySync(launch);
 +  waitFor("media controller bound",()->controller()!=null,15000);
@@ -924,11 +923,15 @@
 +  queue.putExtra("START_FOREGROUND",true);
 +  target.startForegroundService(queue);
 +  waitFor("first short track begins",()->controller()!=null&&controller().getPlaybackState()!=null&&controller().getPlaybackState().getState()==PlaybackState.STATE_PLAYING,15000);
-+  waitFor("tenth track naturally finishes",()->{
++  waitFor("tenth track starts after first nine",()->{
 +   MediaController c=controller();
-+   return c!=null&&c.getMetadata()!=null&&last.equals(c.getMetadata().getString("__SOURCE__"))&&
-+    c.getPlaybackState()!=null&&c.getPlaybackState().getState()==PlaybackState.STATE_STOPPED;
++   return c!=null&&c.getPlaybackState()!=null&&c.getPlaybackState().getState()==PlaybackState.STATE_PLAYING&&
++    c.getPlaybackState().getActiveQueueItemId()==9;
 +  },25000);
++  // The legacy engine resets active item ID to zero on STOPPED; do not
++  // compare metadata after completion because it restores the first item.
++  waitFor("tenth track naturally finishes",()->controller()!=null&&controller().getPlaybackState()!=null&&
++   controller().getPlaybackState().getState()==PlaybackState.STATE_STOPPED,12000);
 +  check(playerNotificationVisible(),"notification stays after last track ends");
 +  SystemClock.sleep(35000); // Detect old 30-second delayed service shutdown.
 +  check(playerNotificationVisible(),"notification survives delayed stop deadline");
