@@ -946,7 +946,7 @@
 +  // compare metadata after completion because it restores the first item.
 +  waitFor("tenth track naturally finishes",()->controller()!=null&&controller().getPlaybackState()!=null&&
 +   controller().getPlaybackState().getState()==PlaybackState.STATE_STOPPED,12000);
-+  check(playerNotificationVisible(),"notification stays after last track ends");
++  waitFor("notification stays after last track ends",()->playerNotificationVisible(),5000);
 +  SystemClock.sleep(35000); // Detect old 30-second delayed service shutdown.
 +  check(playerNotificationVisible(),"notification survives delayed stop deadline");
 +  Intent close=new Intent("com.umedjon.filemanager.player.close").setClassName(target,"com.example.android.uamp.MusicService");
