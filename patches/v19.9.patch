@@ -165,7 +165,7 @@
  - arsc
  - dex
 --- a/scripts/emulator-test-199.sh	1970-01-01 06:00:00.000000000 +0600
-+++ b/scripts/emulator-test-199.sh	2026-11-15 23:54:24.843406797 +0500
++++ b/scripts/emulator-test-199.sh	2026-11-16 00:38:39.697602141 +0500
 @@ -0,0 +1,91 @@
 +#!/usr/bin/env bash
 +set -euo pipefail
@@ -222,14 +222,14 @@
 +
 +run_favorites() {
 +  local mode="$1" output="$tool_dir/logs/favorites-$1.txt"
-+  adb shell am instrument -w -r -e mode "$mode" \
++  timeout --signal=TERM --kill-after=15s 150s adb shell am instrument -w -r -e mode "$mode" \
 +    com.umedjon.filemanager.test/com.umedjon.filemanager.test.FavoritesInstrumentation | tee "$output"
 +  grep -F 'EMULATOR_TEST_PASS' "$output"
 +  grep -F 'INSTRUMENTATION_CODE: -1' "$output"
 +}
 +run_navigation() {
 +  local mode="$1" output="$tool_dir/logs/widget-$1.txt"
-+  adb shell am instrument -w -r -e mode "$mode" \
++  timeout --signal=TERM --kill-after=15s 180s adb shell am instrument -w -r -e mode "$mode" \
 +    com.umedjon.filemanager.test/com.umedjon.filemanager.test.NavigationInstrumentation | tee "$output"
 +  grep -F 'NAVIGATION_TEST_PASS' "$output"
 +  grep -F 'INSTRUMENTATION_CODE: -1' "$output"
@@ -407,8 +407,8 @@
 +        android:functionalTest="true"/>
 +</manifest>
 --- a/tests/emulator199/NavigationInstrumentation.java	1970-01-01 06:00:00.000000000 +0600
-+++ b/tests/emulator199/NavigationInstrumentation.java	2026-11-16 00:17:55.559563742 +0500
-@@ -0,0 +1,311 @@
++++ b/tests/emulator199/NavigationInstrumentation.java	2026-11-16 00:38:56.149417917 +0500
+@@ -0,0 +1,333 @@
 +package com.umedjon.filemanager.test;
 +
 +import android.app.*;
@@ -470,6 +470,7 @@
 +  },"navigation-emulator").start();
 + }
 + private void ok(boolean condition,String description){checks++;if(!condition)throw new AssertionError(description);}
++ private void stage(String description){android.util.Log.i("UMEDJON_NAV_TEST","STAGE "+description);}
 + private <T> T ui(Callable<T> job){
 +  AtomicReference<T> value=new AtomicReference<>();AtomicReference<Throwable> error=new AtomicReference<>();
 +  runOnMainSync(()->{try{value.set(job.call());}catch(Throwable t){error.set(t);}});
@@ -551,12 +552,17 @@
 +   .path(path.substring(base.length())).build().toString();
 + }
 + private String realFolderMediaId(File file)throws Exception{
++  stage("native folder start MainActivity");
 +  Activity manager=startActivitySync(new Intent(Intent.ACTION_MAIN).setClassName(context,MAIN)
 +   .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
++  stage("native folder MainActivity opened");
 +  String folder=folderUri(file);
++  stage("native folder p2 navigate");
 +  ui(()->{Method m=manager.getClass().getMethod("p2",String.class,Runnable.class);
 +   m.invoke(manager,folder,(Runnable)null);return null;});
++  stage("native folder p2 returned");
 +  await("real file manager displays source folder",()->fileRow(filesList(manager),file.getName())>=0,15000);
++  stage("native folder row visible");
 +  return ui(()->{
 +   AbsListView list=filesList(manager);
 +   return String.valueOf(appCall(list.getAdapter().getItem(fileRow(list,file.getName())),"R"));
@@ -610,12 +616,14 @@
 +  SystemClock.sleep(450);
 + }
 + private void widgetToFavorites(String label,int state)throws Exception{
++  stage(label+" widget begin");
 +  long before=playback.getPlaybackState().getPosition();String original=currentSource();Object owner=service();
 +  int beforeResumes=resumes;
 +  PendingIntent action=widget();ok(action!=null,label+" widget PendingIntent exists");
 +  openHomeBeforeWidget();
 +  action.send();
 +  await(label+" opens Favorites source",()->resumes>beforeResumes&&resumed!=null&&FAVORITES.equals(resumed.getClass().getName()),15000);
++  stage(label+" Favorites resumed");
 +  Activity favorite=resumed;
 +  // FavoritesActivity consumes and removes the one-shot focus extra in onResume;
 +  // the observable contract is the current track's row brought into view.
@@ -628,6 +636,7 @@
 +   int first=list.getFirstVisiblePosition(),last=list.getLastVisiblePosition();
 +   return first<=19&&last>=19;
 +  },10000);
++  stage(label+" Favorites row visible");
 +  ok(ui(()->list.getAdapter().getCount())==20,label+" source list contains expected tracks");
 +  unchanged(label,state,before,original,owner);
 + }
@@ -639,6 +648,7 @@
 +  return null;
 + }
 + private void notificationAndBack(String label,int state)throws Exception{
++  stage(label+" notification begin");
 +  await(label+" real media notification",()->notification()!=null,15000);
 +  long before=playback.getPlaybackState().getPosition();String original=currentSource();Object owner=service();
 +  Activity previous=resumed;
@@ -649,24 +659,29 @@
 +  // essential: it must never re-prepare or seek the live audio.
 +  await(label+" opens playback from notification",()->resumed!=null&&resumed!=previous&&
 +   (MAIN.equals(resumed.getClass().getName())||FULL.equals(resumed.getClass().getName())),15000);
++  stage(label+" notification UI opened");
 +  unchanged(label+" notification tap",state,before,original,owner);
 +  if(MAIN.equals(resumed.getClass().getName())){
 +   Activity manager=resumed;
 +   ui(()->{manager.startActivity(new Intent().setClassName(context,FULL));return null;});
 +   await(label+" full player opens",()->resumed!=null&&FULL.equals(resumed.getClass().getName()),15000);
++   stage(label+" fullscreen opened");
 +   unchanged(label+" full player",state,before,original,owner);
 +  }
 +  Activity fullscreen=resumed;long beforeBack=playback.getPlaybackState().getPosition();
 +  sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);
 +  await(label+" Back leaves fullscreen",()->fullscreen.isFinishing()||!FULL.equals(resumed.getClass().getName()),10000);
++  stage(label+" fullscreen Back complete");
 +  unchanged(label+" Back",state,beforeBack,original,owner);
 + }
 + private void folderWidget(int state)throws Exception{
++  stage("folder widget begin "+state);
 +  long before=playback.getPlaybackState().getPosition();String original=currentSource();Object owner=service();
 +  int beforeResumes=resumes;
 +  openHomeBeforeWidget();
 +  widget().send();
 +  await("folder widget opens original file manager screen",()->resumes>beforeResumes&&resumed!=null&&MAIN.equals(resumed.getClass().getName()),15000);
++  stage("folder widget MainActivity resumed");
 +  Intent route=new Intent("com.umedjon.filemanager.OPEN_PLAYBACK_SOURCE")
 +   .setClassName(context,MAIN).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP);
 +  PendingIntent expected=PendingIntent.getActivity(context,154,route,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
@@ -676,31 +691,38 @@
 +   AbsListView list=filesList(manager);int row=fileRow(list,"source-nav-folder.wav");
 +   return row>=0&&list.getFirstVisiblePosition()<=row&&list.getLastVisiblePosition()>=row;
 +  },15000);
++  stage("folder widget source row visible");
 +  unchanged("folder widget",state,before,original,owner);
 + }
 + private void navigation()throws Exception{
++  stage("navigation begin");
 +  File favorite=wav("source-nav-favorites.wav");sourceUri=Uri.fromFile(favorite).toString();
 +  seedFavorites(sourceUri);
 +  Activity first=launchFavorites();ok(first!=null,"Favorites opened");
 +  queue(favorite,"favorites");
++  stage("favorites audio playing");
 +  widgetToFavorites("favorites playing",PlaybackState.STATE_PLAYING);
 +  widgetToFavorites("favorites repeated",PlaybackState.STATE_PLAYING);
 +  notificationAndBack("favorites playing",PlaybackState.STATE_PLAYING);
++  stage("favorites notification and Back checked");
 +  playback.getTransportControls().pause();
 +  await("favorites paused",()->playback.getPlaybackState().getState()==PlaybackState.STATE_PAUSED,5000);
 +  widgetToFavorites("favorites paused",PlaybackState.STATE_PAUSED);
 +  notificationAndBack("favorites paused",PlaybackState.STATE_PAUSED);
++  stage("paused notification and Back checked");
 +
 +  File folderTrack=wav("source-nav-folder.wav");
 +  String folderMediaId=realFolderMediaId(folderTrack);
 +  ok(folderMediaId!=null&&!folderMediaId.isEmpty(),"real folder media ID resolved");
 +  queue(folderTrack,"folder",folderMediaId);
++  stage("folder audio playing");
 +  folderWidget(PlaybackState.STATE_PLAYING);
 +  notificationAndBack("folder playing",PlaybackState.STATE_PLAYING);
 +  playback.getTransportControls().pause();
 +  await("folder paused",()->playback.getPlaybackState().getState()==PlaybackState.STATE_PAUSED,5000);
 +  folderWidget(PlaybackState.STATE_PAUSED);
 +  notificationAndBack("folder paused",PlaybackState.STATE_PAUSED);
++  stage("folder notification and Back checked");
 +  long position=playback.getPlaybackState().getPosition();
 +  ok(position>=119000,"position retained before cold-restart test");
 +  context.getSharedPreferences("umedjon_navigation_probe",0).edit().putLong("paused",position).commit();
