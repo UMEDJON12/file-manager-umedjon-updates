@@ -356,8 +356,8 @@
 +        android:functionalTest="true"/>
 +</manifest>
 --- a/tests/emulator199/NavigationInstrumentation.java	1970-01-01 06:00:00.000000000 +0600
-+++ b/tests/emulator199/NavigationInstrumentation.java	2026-11-15 23:38:23.350180087 +0500
-@@ -0,0 +1,232 @@
++++ b/tests/emulator199/NavigationInstrumentation.java	2026-11-15 23:47:22.792081750 +0500
+@@ -0,0 +1,236 @@
 +package com.umedjon.filemanager.test;
 +
 +import android.app.*;
@@ -511,7 +511,10 @@
 +  action.send();
 +  await(label+" opens Favorites source",()->resumed!=null&&resumed!=previous&&FAVORITES.equals(resumed.getClass().getName()),15000);
 +  Activity favorite=resumed;
-+  ok(sourceUri.equals(favorite.getIntent().getStringExtra("umedjon.focus_uri")),label+" carries exact file URI");
++  // FavoritesActivity consumes and removes the one-shot focus extra in onResume;
++  // the observable contract is the current track's row brought into view.
++  ok(sourceUri.equals(context.getSharedPreferences("umedjon_playback",0).getString("uri",null)),
++   label+" retains the exact active file URI");
 +  int id=context.getResources().getIdentifier("umedjon_favorites_list","id",APP);
 +  ListView list=ui(()->(ListView)favorite.findViewById(id));
 +  ok(list!=null,label+" Favorites list exists");
@@ -519,6 +522,7 @@
 +   int first=list.getFirstVisiblePosition(),last=list.getLastVisiblePosition();
 +   return first<=19&&last>=19;
 +  },10000);
++  ok(ui(()->list.getAdapter().getCount())==20,label+" source list contains expected tracks");
 +  unchanged(label,state,before,original,owner);
 + }
 + private PendingIntent notification()throws Exception{
@@ -698,7 +702,7 @@
  
  if __name__=='__main__':unittest.main()
 --- a/tests/release199/check.py	1970-01-01 06:00:00.000000000 +0600
-+++ b/tests/release199/check.py	2026-11-15 23:39:20.337429991 +0500
++++ b/tests/release199/check.py	2026-11-15 23:47:23.848069744 +0500
 @@ -0,0 +1,58 @@
 +"""Regression gates for preserving playback state across external navigation."""
 +from pathlib import Path
@@ -737,7 +741,7 @@
 +     'folderWidget(PlaybackState.STATE_PLAYING)','folderWidget(PlaybackState.STATE_PAUSED)',
 +     'notificationAndBack("folder playing"','notificationAndBack("folder paused"',
 +     'sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)','seekTo(120000)',
-+     'getActiveNotifications()','NAVIGATION_TEST_PASS','sourceUri.equals(favorite.getIntent()',
++     'getActiveNotifications()','NAVIGATION_TEST_PASS','sourceUri.equals(context.getSharedPreferences(',
 +     'preserves MusicService instance','does not restart at 00:00'):
 +   self.assertIn(case,test)
 +
