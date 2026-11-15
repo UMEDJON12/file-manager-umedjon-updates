@@ -165,7 +165,7 @@
  - arsc
  - dex
 --- a/scripts/emulator-test-199.sh	1970-01-01 06:00:00.000000000 +0600
-+++ b/scripts/emulator-test-199.sh	2026-11-16 00:38:39.697602141 +0500
++++ b/scripts/emulator-test-199.sh	2026-11-16 01:07:32.966080770 +0500
 @@ -0,0 +1,91 @@
 +#!/usr/bin/env bash
 +set -euo pipefail
@@ -242,10 +242,10 @@
 +adb shell dumpsys package com.umedjon.filemanager | grep -m 1 'versionCode=2103110'
 +adb shell monkey -p com.umedjon.filemanager 1 | tee "$tool_dir/logs/start-199.txt"
 +run_favorites verify
-+run_favorites queue_end
 +run_navigation navigation
 +adb shell am force-stop com.umedjon.filemanager
 +run_navigation cold
++run_favorites queue_end
 +adb shell uiautomator dump /sdcard/window.xml || true
 +adb pull /sdcard/window.xml "$tool_dir/logs/window.xml" || true
 +adb shell screencap -p /sdcard/umedjon-final.png || true
@@ -259,7 +259,7 @@
 +echo 'ALL_EMULATOR_TESTS_PASSED'
 +touch "$tool_dir/logs/emulator-ok"
 --- a/src/com/umedjon/filemanager/FavoritesActivity.java	2026-11-15 17:31:21.942904001 +0500
-+++ b/src/com/umedjon/filemanager/FavoritesActivity.java	2026-11-16 00:45:47.368782382 +0500
++++ b/src/com/umedjon/filemanager/FavoritesActivity.java	2026-11-16 01:07:22.410203232 +0500
 @@ -5,6 +5,7 @@
   public void onApplyWindowsInsets(ax.T.b insets,boolean clipped){}
   List<String[]> tracks=new ArrayList<>();MiniPlayer mini;
@@ -268,7 +268,7 @@
   boolean sourceInFavorites;int mediaIdMatches;
   static boolean isMissing(String[] t){return t[0].startsWith("umedjon-missing:")||"missing".equals(t[4])||"ambiguous".equals(t[4]);}
   static boolean sameSource(String first,String second){return !TextUtils.isEmpty(first)&&!TextUtils.isEmpty(second)&&Uri.parse(first).normalizeScheme().equals(Uri.parse(second).normalizeScheme());}
-@@ -98,10 +99,20 @@
+@@ -98,10 +99,30 @@
    TextView empty=findViewById(Bridge.res(this,"id","umedjon_empty"));
    list.setEmptyView(empty);
    onPlaybackChanged();
@@ -276,14 +276,22 @@
 +  // Wait for window focus: scrolling during onResume can be undone when the
 +  // window first attaches or when its list is laid out after the transition.
    String focus=getIntent().getStringExtra("umedjon.focus_uri");
--  if(focus!=null){
--   getIntent().removeExtra("umedjon.focus_uri");
+   if(focus!=null){
++   pendingFocusUri=focus;
+    getIntent().removeExtra("umedjon.focus_uri");
 -   for(int i=0;i<tracks.size();i++)if(focus.equals(tracks.get(i)[0])){Navigation.focusRow(list,i);break;}
-+  if(focus!=null){pendingFocusUri=focus;getIntent().removeExtra("umedjon.focus_uri");}
++   // Some Android launch paths reuse the window without dispatching another
++   // onWindowFocusChanged(true). This fallback is single-shot: the first
++   // successful callback consumes pendingFocusUri; subsequent ones do nothing.
++   list.postDelayed(this::applyPendingFocus,450);
++  }
 + }
 + @Override public void onWindowFocusChanged(boolean hasFocus){
 +  super.onWindowFocusChanged(hasFocus);
-+  if(!hasFocus||pendingFocusUri==null)return;
++  if(hasFocus)applyPendingFocus();
++ }
++ void applyPendingFocus(){
++  if(pendingFocusUri==null)return;
 +  String focus=pendingFocusUri;pendingFocusUri=null;
 +  ListView list=findViewById(Bridge.res(this,"id","umedjon_favorites_list"));
 +  for(int i=0;i<tracks.size();i++)if(focus.equals(tracks.get(i)[0])){
