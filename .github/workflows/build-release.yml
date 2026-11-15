@@ -107,9 +107,7 @@ jobs:
       - name: Enable KVM for Android Emulator
         run: |
           test -e /dev/kvm
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
+          sudo chmod a+rw /dev/kvm
           test -w /dev/kvm
 
       - name: Test signed APK in GitHub Android Emulator (API 35, KVM)
