@@ -518,7 +518,25 @@
    String current=(String)Bridge.get(engine,"r0");if(!full.equals(current)||old==null||(!AudioOptions.remember(c)&&((Number)Bridge.call(engine,"getState")).intValue()!=2&&((Number)Bridge.call(engine,"getState")).intValue()!=3)){long position=PlaybackMemory.position(c,uri,id);Bridge.call(engine,"e",full,(int)Math.min(Integer.MAX_VALUE,position));}
 --- a/apk/smali/ax/X4/g.smali
 +++ b/apk/smali/ax/X4/g.smali
-@@ -1625,6 +1625,8 @@
+@@ -1528,6 +1528,8 @@
+ 
+     .line 23
+     .line 24
++    invoke-static {}, Lcom/umedjon/filemanager/Playback;->queueFinished()V
++
+     invoke-direct {p0, v2}, Lax/X4/g;->M(Z)V
+ 
+     .line 25
+@@ -1573,6 +1575,8 @@
+ 
+     .line 45
+     .line 46
++    invoke-static {}, Lcom/umedjon/filemanager/Playback;->queueFinished()V
++
+     invoke-direct {p0, v2}, Lax/X4/g;->M(Z)V
+ 
+     .line 47
+@@ -1625,6 +1629,8 @@
      :cond_4
      const/4 v0, 0x0
  
@@ -673,7 +691,7 @@
 +touch "$tool_dir/logs/emulator-ok"
 --- a/tests/release197/check.py
 +++ b/tests/release197/check.py
-@@ -0,0 +1,82 @@
+@@ -0,0 +1,84 @@
 +"""Release 19.7 regression checks. Android behavioral tests run in GitHub Actions."""
 +from pathlib import Path
 +import unittest
@@ -737,7 +755,9 @@
 +        manager=(ROOT/'apk/smali/ax/X4/g.smali').read_text()
 +        service=(ROOT/'apk/smali/com/example/android/uamp/MusicService.smali').read_text()
 +        callback=(ROOT/'apk/smali/ax/V4/d$a.smali').read_text()
-+        self.assertIn('Playback;->queueFinished()V',manager)
++        # The legacy queue wraps from the final item to the first; it stops
++        # through M(true), not the no-next-item branch alone.
++        self.assertGreaterEqual(manager.count('Playback;->queueFinished()V'),3)
 +        self.assertIn('Playback;->queueEndPending()Z',service)
 +        self.assertIn('Playback;->queueEndPending()Z',callback)
 +        self.assertIn('invoke-virtual {p1}, Lax/V4/d;->l()V',callback)
