@@ -68,7 +68,7 @@
            PY
            java -jar "$RUNNER_TEMP/project/UMEDJON-Source/toolchain/sdk/android-15/lib/apksigner.jar" verify --verbose "$APK"
            sha256sum "$APK"
-@@ -97,39 +100,68 @@
+@@ -97,39 +100,71 @@
        - name: Upload verified APK as workflow artifact
          uses: actions/upload-artifact@v4
          with:
@@ -89,6 +89,9 @@
 +        uses: reactivecircus/android-emulator-runner@v2
 +        env:
 +          GH_TOKEN: ${{ github.token }}
++          UMEDJON_STORE_PASS: ${{ secrets.UMEDJON_STORE_PASS }}
++          UMEDJON_KEY_PASS: ${{ secrets.UMEDJON_KEY_PASS }}
++          UMEDJON_KEY_ALIAS: ${{ secrets.UMEDJON_KEY_ALIAS }}
 +        with:
 +          api-level: 35
 +          target: google_apis
@@ -583,10 +586,10 @@
 +    z.write(sys.argv[2],'classes.dex',compress_type=zipfile.ZIP_DEFLATED)
 +PY
 +"$build_tools/zipalign" -f -p 4 "$tool_dir/test-unsigned.apk" "$tool_dir/test-aligned.apk"
-+keytool -genkeypair -keystore "$tool_dir/test.jks" -storepass testpass -keypass testpass \
-+  -alias emulator -keyalg RSA -keysize 2048 -validity 2 -dname 'CN=UMEDJON emulator test' -noprompt >/dev/null 2>&1
-+"$build_tools/apksigner" sign --ks "$tool_dir/test.jks" --ks-pass pass:testpass \
-+  --key-pass pass:testpass --ks-key-alias emulator --out "$test_apk" "$tool_dir/test-aligned.apk"
++# Instrumentation must share the original APK's signing certificate.
++test -s "$RUNNER_TEMP/umedjon-original.jks"
++"$build_tools/apksigner" sign --ks "$RUNNER_TEMP/umedjon-original.jks" --ks-pass "pass:$UMEDJON_STORE_PASS" \
++  --key-pass "pass:$UMEDJON_KEY_PASS" --ks-key-alias "$UMEDJON_KEY_ALIAS" --out "$test_apk" "$tool_dir/test-aligned.apk"
 +
 +adb wait-for-device
 +boot="$(adb shell getprop sys.boot_completed | tr -d '\r')"
