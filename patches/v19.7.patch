@@ -442,7 +442,7 @@
  }
 --- a/src/com/umedjon/filemanager/Playback.java
 +++ b/src/com/umedjon/filemanager/Playback.java
-@@ -1,11 +1,15 @@
+@@ -1,11 +1,16 @@
  package com.umedjon.filemanager;
  import android.app.*;import android.content.*;import android.media.*;import android.media.session.*;import android.net.Uri;import android.os.*;import android.util.Pair;import java.util.*;import org.json.*;
  public final class Playback {
@@ -451,7 +451,9 @@
 + static volatile boolean restoring;static volatile boolean queueEndPending;static Service service;static MediaController controller;static final Handler handler=new Handler(Looper.getMainLooper());static String queueSource;
 + static final Runnable tick=new Runnable(){public void run(){save(false);if(service!=null&&!queueEndPending)handler.postDelayed(this,1000);}};
   static final MediaController.Callback callback=new MediaController.Callback(){public void onPlaybackStateChanged(PlaybackState p){save(true);}public void onMetadataChanged(MediaMetadata m){queueSource=null;save(true);}};
-  public static void attach(Service s){try{service=s;Object token=Bridge.call(Bridge.call(Bridge.get(s,"r0"),"c"),"e");controller=new MediaController(s,(MediaSession.Token)token);controller.registerCallback(callback,handler);AudioOptions.restore(s);handler.removeCallbacks(tick);handler.post(tick);}catch(Throwable e){android.util.Log.e("UMEDJON","Attach media",e);}}
+- public static void attach(Service s){try{service=s;Object token=Bridge.call(Bridge.call(Bridge.get(s,"r0"),"c"),"e");controller=new MediaController(s,(MediaSession.Token)token);controller.registerCallback(callback,handler);AudioOptions.restore(s);handler.removeCallbacks(tick);handler.post(tick);}catch(Throwable e){android.util.Log.e("UMEDJON","Attach media",e);}}
++ static void ensureMediaChannel(Service s){if(Build.VERSION.SDK_INT<26)return;NotificationManager manager=(NotificationManager)s.getSystemService(Context.NOTIFICATION_SERVICE);if(manager!=null&&manager.getNotificationChannel("music_player")==null)manager.createNotificationChannel(new NotificationChannel("music_player","Музыкальный плеер",NotificationManager.IMPORTANCE_LOW));}
++ public static void attach(Service s){try{ensureMediaChannel(s);service=s;Object token=Bridge.call(Bridge.call(Bridge.get(s,"r0"),"c"),"e");controller=new MediaController(s,(MediaSession.Token)token);controller.registerCallback(callback,handler);AudioOptions.restore(s);handler.removeCallbacks(tick);handler.post(tick);}catch(Throwable e){android.util.Log.e("UMEDJON","Attach media",e);}}
 - public static void destroyed(Service s){engineSave(true);save(true);handler.removeCallbacks(tick);if(controller!=null)controller.unregisterCallback(callback);controller=null;service=null;queueSource=null;}
 + public static void destroyed(Service s){engineSave(true);save(true);handler.removeCallbacks(tick);if(controller!=null)controller.unregisterCallback(callback);controller=null;service=null;queueSource=null;queueEndPending=false;}
 + /** Only natural exhaustion of the active queue parks the notification. */
@@ -637,7 +639,7 @@
 +touch "$tool_dir/logs/emulator-ok"
 --- /dev/null
 +++ b/tests/release197/check.py
-@@ -0,0 +1,80 @@
+@@ -0,0 +1,82 @@
 +"""Release 19.7 regression checks. Android behavioral tests run in GitHub Actions."""
 +from pathlib import Path
 +import unittest
@@ -706,6 +708,8 @@
 +        self.assertIn('Playback;->queueEndPending()Z',callback)
 +        self.assertIn('invoke-virtual {p1}, Lax/V4/d;->l()V',callback)
 +        self.assertIn('clearQueueEnd();SavedPlayer.closed()',PLAYBACK)
++        self.assertIn('ensureMediaChannel(s);service=s;',PLAYBACK)
++        self.assertIn('getNotificationChannel("music_player")==null',PLAYBACK)
 +
 +    def test_ten_track_end_emulator_scenario(self):
 +        script=(ROOT/'scripts/emulator-test-197.sh').read_text()
