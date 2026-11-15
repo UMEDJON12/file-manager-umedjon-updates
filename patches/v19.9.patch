@@ -258,9 +258,43 @@
 +sha256sum -c "$tool_dir/logs/tested-apk-sha256.txt"
 +echo 'ALL_EMULATOR_TESTS_PASSED'
 +touch "$tool_dir/logs/emulator-ok"
+--- a/src/com/umedjon/filemanager/FavoritesActivity.java	2026-11-15 17:31:21.942904001 +0500
++++ b/src/com/umedjon/filemanager/FavoritesActivity.java	2026-11-16 00:45:47.368782382 +0500
+@@ -5,6 +5,7 @@
+  public void onApplyWindowsInsets(ax.T.b insets,boolean clipped){}
+  List<String[]> tracks=new ArrayList<>();MiniPlayer mini;
+  String currentSource,currentMediaId;int currentState=PlaybackState.STATE_NONE;int playingColor;
++ String pendingFocusUri;
+  boolean sourceInFavorites;int mediaIdMatches;
+  static boolean isMissing(String[] t){return t[0].startsWith("umedjon-missing:")||"missing".equals(t[4])||"ambiguous".equals(t[4]);}
+  static boolean sameSource(String first,String second){return !TextUtils.isEmpty(first)&&!TextUtils.isEmpty(second)&&Uri.parse(first).normalizeScheme().equals(Uri.parse(second).normalizeScheme());}
+@@ -98,10 +99,20 @@
+   TextView empty=findViewById(Bridge.res(this,"id","umedjon_empty"));
+   list.setEmptyView(empty);
+   onPlaybackChanged();
++  // The widget can bring a fresh FavoritesActivity over an existing task.
++  // Wait for window focus: scrolling during onResume can be undone when the
++  // window first attaches or when its list is laid out after the transition.
+   String focus=getIntent().getStringExtra("umedjon.focus_uri");
+-  if(focus!=null){
+-   getIntent().removeExtra("umedjon.focus_uri");
+-   for(int i=0;i<tracks.size();i++)if(focus.equals(tracks.get(i)[0])){Navigation.focusRow(list,i);break;}
++  if(focus!=null){pendingFocusUri=focus;getIntent().removeExtra("umedjon.focus_uri");}
++ }
++ @Override public void onWindowFocusChanged(boolean hasFocus){
++  super.onWindowFocusChanged(hasFocus);
++  if(!hasFocus||pendingFocusUri==null)return;
++  String focus=pendingFocusUri;pendingFocusUri=null;
++  ListView list=findViewById(Bridge.res(this,"id","umedjon_favorites_list"));
++  for(int i=0;i<tracks.size();i++)if(focus.equals(tracks.get(i)[0])){
++   android.util.Log.d("UMEDJON_NAVIGATION","Favorites window focused; navigate to source row "+i);
++   Navigation.focusRow(list,i);break;
+   }
+  }
+  protected void onStart(){super.onStart();mini.start();}
 --- a/src/com/umedjon/filemanager/Navigation.java	2026-11-10 22:43:20.000000000 +0500
-+++ b/src/com/umedjon/filemanager/Navigation.java	2026-11-16 00:30:25.447177899 +0500
-@@ -12,5 +12,31 @@
++++ b/src/com/umedjon/filemanager/Navigation.java	2026-11-16 00:45:54.108709430 +0500
+@@ -12,5 +12,33 @@
    Object f=Bridge.call(a,"F1");AbsListView l=Hooks.list(f);if(l!=null&&l.getAdapter()!=null){for(int i=0;i<l.getAdapter().getCount();i++){Object item=l.getAdapter().getItem(i);String key=String.valueOf(Bridge.call(item,"R"));if(key.equals(id)||key.equals(uri)){focusRow(l,i);return;}}}
    focus(a,id,uri,attempt+1);
   }catch(Throwable e){if(attempt<30)focus(a,id,uri,attempt+1);}},attempt==0?100:250);}
@@ -272,6 +306,7 @@
 + static void focusRowAttempt(AbsListView l,int position,int attempt){
 +  l.postDelayed(()->{
 +   if(!l.isAttachedToWindow()||l.getAdapter()==null||position>=l.getAdapter().getCount()){
++    android.util.Log.d("UMEDJON_NAVIGATION","Focus source row "+position+" waiting for attached list, attempt "+attempt);
 +    if(attempt<20)focusRowAttempt(l,position,attempt+1);
 +    return;
 +   }
@@ -282,6 +317,7 @@
 +    if(attempt<20)focusRowAttempt(l,position,attempt+1);
 +    return;
 +   }
++   android.util.Log.d("UMEDJON_NAVIGATION","Focus source row "+position+" visible "+l.getFirstVisiblePosition()+".."+l.getLastVisiblePosition());
 +   focusVisible(l,position);
 +  },attempt==0?100:200);
 + }
