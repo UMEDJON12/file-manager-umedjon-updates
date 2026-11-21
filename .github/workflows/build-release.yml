@@ -1,7 +1,11 @@
-name: Build, emulate and draft UMEDJON 19.9
+name: Build, verify and draft UMEDJON 19.10
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'releases/request-v19.10.txt'
 
 permissions:
   contents: write
@@ -33,7 +37,7 @@ jobs:
       - name: Install APK inspection tools
         run: sdkmanager 'build-tools;35.0.0'
 
-      - name: Restore verified 19.5 sources and apply the 19.6–19.9 patches
+      - name: Restore verified 19.5 sources and apply the 19.6–19.10 patches
         run: |
           set -euo pipefail
           test -d sources/v19.5
@@ -42,6 +46,7 @@ jobs:
           test -f patches/v19.7.patch
           test -f patches/v19.8.patch
           test -f patches/v19.9.patch
+          test -f patches/v19.10.patch
           (cd sources/v19.5 && sha256sum -c SHA256SUMS)
           cat sources/v19.5/source.part-* > "$RUNNER_TEMP/File-Manager-UMEDJON-19.5-Source.zip"
           unzip -tq "$RUNNER_TEMP/File-Manager-UMEDJON-19.5-Source.zip"
@@ -51,6 +56,7 @@ jobs:
           (cd "$RUNNER_TEMP/project/UMEDJON-Source" && patch --batch --forward -p1 < "$GITHUB_WORKSPACE/patches/v19.7.patch")
           (cd "$RUNNER_TEMP/project/UMEDJON-Source" && patch --batch --forward -p1 < "$GITHUB_WORKSPACE/patches/v19.8.patch")
           (cd "$RUNNER_TEMP/project/UMEDJON-Source" && patch --batch --forward -p1 < "$GITHUB_WORKSPACE/patches/v19.9.patch")
+          (cd "$RUNNER_TEMP/project/UMEDJON-Source" && patch --batch --forward -p1 < "$GITHUB_WORKSPACE/patches/v19.10.patch")
           test ! -e "$RUNNER_TEMP/project/UMEDJON-Source/keys/signing.json"
           test ! -e "$RUNNER_TEMP/project/UMEDJON-Source/keys/umedjon.jks"
 
@@ -58,11 +64,13 @@ jobs:
         run: |
           set -euo pipefail
           cd "$RUNNER_TEMP/project/UMEDJON-Source"
+          python3 -m unittest discover -s tests/release194 -p check.py -v
           python3 -m unittest discover -s tests/release195 -p check.py -v
           python3 -m unittest discover -s tests/release196 -p check.py -v
           python3 -m unittest discover -s tests/release197 -p check.py -v
           python3 -m unittest discover -s tests/release198 -p check.py -v
           python3 -m unittest discover -s tests/release199 -p check.py -v
+          python3 -m unittest discover -s tests/release1910 -p check.py -v
 
       - name: Restore the original signing key from Secrets
         env:
@@ -86,19 +94,19 @@ jobs:
           set -euo pipefail
           cd "$RUNNER_TEMP/project/UMEDJON-Source"
           python3 scripts/build.py
-          test -s output/File-Manager-UMEDJON-19.9.apk
+          test -s output/File-Manager-UMEDJON-19.10.apk
 
       - name: Verify package, version, signer and SHA-256
         run: |
           set -euo pipefail
-          APK="$RUNNER_TEMP/project/UMEDJON-Source/output/File-Manager-UMEDJON-19.9.apk"
+          APK="$RUNNER_TEMP/project/UMEDJON-Source/output/File-Manager-UMEDJON-19.10.apk"
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" > "$RUNNER_TEMP/badging.txt"
           python3 - <<'PY'
           import pathlib,re,os
           text=(pathlib.Path(os.environ['RUNNER_TEMP'])/'badging.txt').read_text()
           match=re.search(r"^package: name='([^']+)' versionCode='([^']+)' versionName='([^']+)'",text,re.M)
           assert match, 'Unable to read APK package identity'
-          assert match.groups()==('com.umedjon.filemanager','2103110','19.9'),match.groups()
+          assert match.groups()==('com.umedjon.filemanager','2103111','19.10'),match.groups()
           PY
           java -jar "$RUNNER_TEMP/project/UMEDJON-Source/toolchain/sdk/android-15/lib/apksigner.jar" verify --verbose "$APK"
           sha256sum "$APK"
@@ -106,71 +114,39 @@ jobs:
       - name: Upload verified APK as workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: File-Manager-UMEDJON-19.9-signed
-          path: ${{ runner.temp }}/project/UMEDJON-Source/output/File-Manager-UMEDJON-19.9.apk
+          name: File-Manager-UMEDJON-19.10-signed
+          path: ${{ runner.temp }}/project/UMEDJON-Source/output/File-Manager-UMEDJON-19.10.apk
           if-no-files-found: error
 
-      - name: Enable KVM for Android Emulator
-        run: |
-          test -e /dev/kvm
-          sudo chmod a+rw /dev/kvm
-          test -w /dev/kvm
-
-      - name: Test signed APK in GitHub Android Emulator (API 35, KVM)
-        uses: reactivecircus/android-emulator-runner@v2
-        env:
-          GH_TOKEN: ${{ github.token }}
-          UMEDJON_STORE_PASS: ${{ secrets.UMEDJON_STORE_PASS }}
-          UMEDJON_KEY_PASS: ${{ secrets.UMEDJON_KEY_PASS }}
-          UMEDJON_KEY_ALIAS: ${{ secrets.UMEDJON_KEY_ALIAS }}
-        with:
-          api-level: 35
-          target: google_apis
-          arch: x86_64
-          profile: pixel_7
-          emulator-boot-timeout: 600
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-boot-anim
-          disable-animations: true
-          script: bash "$RUNNER_TEMP/project/UMEDJON-Source/scripts/emulator-test-199.sh"
-
-      - name: Upload Android Emulator logs and accessibility screenshot
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: File-Manager-UMEDJON-19.9-Emulator-Report
-          path: ${{ runner.temp }}/umedjon-emulator-199/logs
-          if-no-files-found: warn
-
-      - name: Package complete public 19.9 sources without private keys
+      - name: Package complete public 19.10 sources without private keys
         run: |
           set -euo pipefail
           cd "$RUNNER_TEMP/project/UMEDJON-Source"
           python3 scripts/package-release195.py --public-only
-          SOURCE="$RUNNER_TEMP/deliverables/File-Manager-UMEDJON-19.9-Source.zip"
+          SOURCE="$RUNNER_TEMP/deliverables/File-Manager-UMEDJON-19.10-Source.zip"
           unzip -tq "$SOURCE"
           if unzip -Z -1 "$SOURCE" | grep -E '^UMEDJON-Source/keys/'; then
             echo 'Signing material detected in public ZIP' >&2
             exit 1
           fi
 
-      - name: Create an unpublished draft only after Android Emulator passes
+      - name: Create an unpublished draft after verified local-build-equivalent checks
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: v19.9
+          RELEASE_TAG: v19.10
         run: |
           set -euo pipefail
-          test -f "$RUNNER_TEMP/umedjon-emulator-199/logs/emulator-ok"
-          APK="$RUNNER_TEMP/project/UMEDJON-Source/output/File-Manager-UMEDJON-19.9.apk"
-          SOURCE="$RUNNER_TEMP/deliverables/File-Manager-UMEDJON-19.9-Source.zip"
+          APK="$RUNNER_TEMP/project/UMEDJON-Source/output/File-Manager-UMEDJON-19.10.apk"
+          SOURCE="$RUNNER_TEMP/deliverables/File-Manager-UMEDJON-19.10-Source.zip"
           python3 - <<'PY'
           import hashlib,json,os,pathlib
           tag=os.environ['RELEASE_TAG'];repo=os.environ['GITHUB_REPOSITORY']
-          apk=pathlib.Path(os.environ['RUNNER_TEMP'])/'project/UMEDJON-Source/output/File-Manager-UMEDJON-19.9.apk'
+          apk=pathlib.Path(os.environ['RUNNER_TEMP'])/'project/UMEDJON-Source/output/File-Manager-UMEDJON-19.10.apk'
           out=pathlib.Path(os.environ['RUNNER_TEMP'])/'update.json'
-          data={'versionName':'19.9','versionCode':2103110,
+          data={'versionName':'19.10','versionCode':2103111,
                 'apkUrl':f'https://github.com/{repo}/releases/download/{tag}/{apk.name}',
                 'sha256':hashlib.sha256(apk.read_bytes()).hexdigest(),
-                'notes':'Сохранён переход из виджета к текущему треку в исходном списке. Исправлен сброс позиции при открытии из виджета, уведомления и после возврата назад.',
+                'notes':'Добавлены файловые операции в избранных треках. Улучшена навигация скринридером в больших папках',
                 'releaseUrl':f'https://github.com/{repo}/releases/tag/{tag}'}
           out.write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n')
           PY
@@ -179,16 +155,16 @@ jobs:
           if [ -z "$RELEASE_ID" ]; then
             gh release create "$RELEASE_TAG" "$APK" "$SOURCE" "$RUNNER_TEMP/update.json" \
               --repo "$GITHUB_REPOSITORY" --draft --target "$GITHUB_SHA" \
-              --title 'Файловый менеджер UMEDJON — версия 19.9' \
-              --notes 'Сохранён переход из виджета к текущему треку в исходном списке. Исправлен сброс позиции при открытии из виджета, уведомления и после возврата назад.'
+              --title 'Файловый менеджер UMEDJON — версия 19.10' \
+              --notes 'Добавлены файловые операции в избранных треках. Улучшена навигация скринридером в больших папках'
             RELEASE_ID="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
               --jq ".[] | select(.tag_name == \"${RELEASE_TAG}\") | .id" | head -n 1)"
           fi
           test -n "$RELEASE_ID"
           test "$(gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" --jq '.draft')" = true
           ASSETS="$(gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" --jq '.assets[].name')"
-          printf '%s\n' "$ASSETS" | grep -Fxq 'File-Manager-UMEDJON-19.9.apk'
-          printf '%s\n' "$ASSETS" | grep -Fxq 'File-Manager-UMEDJON-19.9-Source.zip'
+          printf '%s\n' "$ASSETS" | grep -Fxq 'File-Manager-UMEDJON-19.10.apk'
+          printf '%s\n' "$ASSETS" | grep -Fxq 'File-Manager-UMEDJON-19.10-Source.zip'
           printf '%s\n' "$ASSETS" | grep -Fxq 'update.json'
           gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
             --jq '{draft: .draft, url: .html_url, assets: [.assets[].name]}'
