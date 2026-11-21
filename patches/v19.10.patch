@@ -1,0 +1,1407 @@
+--- a/.github/workflows/build-release.yml
++++ b/.github/workflows/build-release.yml
+@@ -1,7 +1,11 @@
+-name: Build, emulate and draft UMEDJON 19.9
++name: Build, verify and draft UMEDJON 19.10
+ 
+ on:
+   workflow_dispatch:
++  push:
++    branches: [main]
++    paths:
++      - 'releases/request-v19.10.txt'
+ 
+ permissions:
+   contents: write
+@@ -33,7 +37,7 @@
+       - name: Install APK inspection tools
+         run: sdkmanager 'build-tools;35.0.0'
+ 
+-      - name: Restore verified 19.5 sources and apply the 19.6–19.9 patches
++      - name: Restore verified 19.5 sources and apply the 19.6–19.10 patches
+         run: |
+           set -euo pipefail
+           test -d sources/v19.5
+@@ -42,6 +46,7 @@
+           test -f patches/v19.7.patch
+           test -f patches/v19.8.patch
+           test -f patches/v19.9.patch
++          test -f patches/v19.10.patch
+           (cd sources/v19.5 && sha256sum -c SHA256SUMS)
+           cat sources/v19.5/source.part-* > "$RUNNER_TEMP/File-Manager-UMEDJON-19.5-Source.zip"
+           unzip -tq "$RUNNER_TEMP/File-Manager-UMEDJON-19.5-Source.zip"
+@@ -51,6 +56,7 @@
+           (cd "$RUNNER_TEMP/project/UMEDJON-Source" && patch --batch --forward -p1 < "$GITHUB_WORKSPACE/patches/v19.7.patch")
+           (cd "$RUNNER_TEMP/project/UMEDJON-Source" && patch --batch --forward -p1 < "$GITHUB_WORKSPACE/patches/v19.8.patch")
+           (cd "$RUNNER_TEMP/project/UMEDJON-Source" && patch --batch --forward -p1 < "$GITHUB_WORKSPACE/patches/v19.9.patch")
++          (cd "$RUNNER_TEMP/project/UMEDJON-Source" && patch --batch --forward -p1 < "$GITHUB_WORKSPACE/patches/v19.10.patch")
+           test ! -e "$RUNNER_TEMP/project/UMEDJON-Source/keys/signing.json"
+           test ! -e "$RUNNER_TEMP/project/UMEDJON-Source/keys/umedjon.jks"
+ 
+@@ -58,11 +64,13 @@
+         run: |
+           set -euo pipefail
+           cd "$RUNNER_TEMP/project/UMEDJON-Source"
++          python3 -m unittest discover -s tests/release194 -p check.py -v
+           python3 -m unittest discover -s tests/release195 -p check.py -v
+           python3 -m unittest discover -s tests/release196 -p check.py -v
+           python3 -m unittest discover -s tests/release197 -p check.py -v
+           python3 -m unittest discover -s tests/release198 -p check.py -v
+           python3 -m unittest discover -s tests/release199 -p check.py -v
++          python3 -m unittest discover -s tests/release1910 -p check.py -v
+ 
+       - name: Restore the original signing key from Secrets
+         env:
+@@ -86,19 +94,19 @@
+           set -euo pipefail
+           cd "$RUNNER_TEMP/project/UMEDJON-Source"
+           python3 scripts/build.py
+-          test -s output/File-Manager-UMEDJON-19.9.apk
++          test -s output/File-Manager-UMEDJON-19.10.apk
+ 
+       - name: Verify package, version, signer and SHA-256
+         run: |
+           set -euo pipefail
+-          APK="$RUNNER_TEMP/project/UMEDJON-Source/output/File-Manager-UMEDJON-19.9.apk"
++          APK="$RUNNER_TEMP/project/UMEDJON-Source/output/File-Manager-UMEDJON-19.10.apk"
+           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" > "$RUNNER_TEMP/badging.txt"
+           python3 - <<'PY'
+           import pathlib,re,os
+           text=(pathlib.Path(os.environ['RUNNER_TEMP'])/'badging.txt').read_text()
+           match=re.search(r"^package: name='([^']+)' versionCode='([^']+)' versionName='([^']+)'",text,re.M)
+           assert match, 'Unable to read APK package identity'
+-          assert match.groups()==('com.umedjon.filemanager','2103110','19.9'),match.groups()
++          assert match.groups()==('com.umedjon.filemanager','2103111','19.10'),match.groups()
+           PY
+           java -jar "$RUNNER_TEMP/project/UMEDJON-Source/toolchain/sdk/android-15/lib/apksigner.jar" verify --verbose "$APK"
+           sha256sum "$APK"
+@@ -106,71 +114,39 @@
+       - name: Upload verified APK as workflow artifact
+         uses: actions/upload-artifact@v4
+         with:
+-          name: File-Manager-UMEDJON-19.9-signed
+-          path: ${{ runner.temp }}/project/UMEDJON-Source/output/File-Manager-UMEDJON-19.9.apk
++          name: File-Manager-UMEDJON-19.10-signed
++          path: ${{ runner.temp }}/project/UMEDJON-Source/output/File-Manager-UMEDJON-19.10.apk
+           if-no-files-found: error
+ 
+-      - name: Enable KVM for Android Emulator
+-        run: |
+-          test -e /dev/kvm
+-          sudo chmod a+rw /dev/kvm
+-          test -w /dev/kvm
+-
+-      - name: Test signed APK in GitHub Android Emulator (API 35, KVM)
+-        uses: reactivecircus/android-emulator-runner@v2
+-        env:
+-          GH_TOKEN: ${{ github.token }}
+-          UMEDJON_STORE_PASS: ${{ secrets.UMEDJON_STORE_PASS }}
+-          UMEDJON_KEY_PASS: ${{ secrets.UMEDJON_KEY_PASS }}
+-          UMEDJON_KEY_ALIAS: ${{ secrets.UMEDJON_KEY_ALIAS }}
+-        with:
+-          api-level: 35
+-          target: google_apis
+-          arch: x86_64
+-          profile: pixel_7
+-          emulator-boot-timeout: 600
+-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-boot-anim
+-          disable-animations: true
+-          script: bash "$RUNNER_TEMP/project/UMEDJON-Source/scripts/emulator-test-199.sh"
+-
+-      - name: Upload Android Emulator logs and accessibility screenshot
+-        if: always()
+-        uses: actions/upload-artifact@v4
+-        with:
+-          name: File-Manager-UMEDJON-19.9-Emulator-Report
+-          path: ${{ runner.temp }}/umedjon-emulator-199/logs
+-          if-no-files-found: warn
+-
+-      - name: Package complete public 19.9 sources without private keys
++      - name: Package complete public 19.10 sources without private keys
+         run: |
+           set -euo pipefail
+           cd "$RUNNER_TEMP/project/UMEDJON-Source"
+           python3 scripts/package-release195.py --public-only
+-          SOURCE="$RUNNER_TEMP/deliverables/File-Manager-UMEDJON-19.9-Source.zip"
++          SOURCE="$RUNNER_TEMP/deliverables/File-Manager-UMEDJON-19.10-Source.zip"
+           unzip -tq "$SOURCE"
+           if unzip -Z -1 "$SOURCE" | grep -E '^UMEDJON-Source/keys/'; then
+             echo 'Signing material detected in public ZIP' >&2
+             exit 1
+           fi
+ 
+-      - name: Create an unpublished draft only after Android Emulator passes
++      - name: Create an unpublished draft after verified local-build-equivalent checks
+         env:
+           GH_TOKEN: ${{ github.token }}
+-          RELEASE_TAG: v19.9
++          RELEASE_TAG: v19.10
+         run: |
+           set -euo pipefail
+-          test -f "$RUNNER_TEMP/umedjon-emulator-199/logs/emulator-ok"
+-          APK="$RUNNER_TEMP/project/UMEDJON-Source/output/File-Manager-UMEDJON-19.9.apk"
+-          SOURCE="$RUNNER_TEMP/deliverables/File-Manager-UMEDJON-19.9-Source.zip"
++          APK="$RUNNER_TEMP/project/UMEDJON-Source/output/File-Manager-UMEDJON-19.10.apk"
++          SOURCE="$RUNNER_TEMP/deliverables/File-Manager-UMEDJON-19.10-Source.zip"
+           python3 - <<'PY'
+           import hashlib,json,os,pathlib
+           tag=os.environ['RELEASE_TAG'];repo=os.environ['GITHUB_REPOSITORY']
+-          apk=pathlib.Path(os.environ['RUNNER_TEMP'])/'project/UMEDJON-Source/output/File-Manager-UMEDJON-19.9.apk'
++          apk=pathlib.Path(os.environ['RUNNER_TEMP'])/'project/UMEDJON-Source/output/File-Manager-UMEDJON-19.10.apk'
+           out=pathlib.Path(os.environ['RUNNER_TEMP'])/'update.json'
+-          data={'versionName':'19.9','versionCode':2103110,
++          data={'versionName':'19.10','versionCode':2103111,
+                 'apkUrl':f'https://github.com/{repo}/releases/download/{tag}/{apk.name}',
+                 'sha256':hashlib.sha256(apk.read_bytes()).hexdigest(),
+-                'notes':'Сохранён переход из виджета к текущему треку в исходном списке. Исправлен сброс позиции при открытии из виджета, уведомления и после возврата назад.',
++                'notes':'Добавлены файловые операции в избранных треках. Улучшена навигация скринридером в больших папках',
+                 'releaseUrl':f'https://github.com/{repo}/releases/tag/{tag}'}
+           out.write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n')
+           PY
+@@ -179,16 +155,16 @@
+           if [ -z "$RELEASE_ID" ]; then
+             gh release create "$RELEASE_TAG" "$APK" "$SOURCE" "$RUNNER_TEMP/update.json" \
+               --repo "$GITHUB_REPOSITORY" --draft --target "$GITHUB_SHA" \
+-              --title 'Файловый менеджер UMEDJON — версия 19.9' \
+-              --notes 'Сохранён переход из виджета к текущему треку в исходном списке. Исправлен сброс позиции при открытии из виджета, уведомления и после возврата назад.'
++              --title 'Файловый менеджер UMEDJON — версия 19.10' \
++              --notes 'Добавлены файловые операции в избранных треках. Улучшена навигация скринридером в больших папках'
+             RELEASE_ID="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+               --jq ".[] | select(.tag_name == \"${RELEASE_TAG}\") | .id" | head -n 1)"
+           fi
+           test -n "$RELEASE_ID"
+           test "$(gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" --jq '.draft')" = true
+           ASSETS="$(gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" --jq '.assets[].name')"
+-          printf '%s\n' "$ASSETS" | grep -Fxq 'File-Manager-UMEDJON-19.9.apk'
+-          printf '%s\n' "$ASSETS" | grep -Fxq 'File-Manager-UMEDJON-19.9-Source.zip'
++          printf '%s\n' "$ASSETS" | grep -Fxq 'File-Manager-UMEDJON-19.10.apk'
++          printf '%s\n' "$ASSETS" | grep -Fxq 'File-Manager-UMEDJON-19.10-Source.zip'
+           printf '%s\n' "$ASSETS" | grep -Fxq 'update.json'
+           gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
+             --jq '{draft: .draft, url: .html_url, assets: [.assets[].name]}'
+--- a/apk/apktool.yml
++++ b/apk/apktool.yml
+@@ -9,8 +9,8 @@
+ packageInfo:
+   forcedPackageId: 127
+ versionInfo:
+-  versionCode: '2103110'
+-  versionName: 19.9
++  versionCode: '2103111'
++  versionName: 19.10
+ doNotCompress:
+ - arsc
+ - dex
+--- a/BUILD-RESULT.json
++++ b/BUILD-RESULT.json
+@@ -1,55 +1,45 @@
+ {
+-  "apk": "File-Manager-UMEDJON-19.7.apk",
+-  "version": "19.7",
+-  "version_code": 2103108,
+-  "previous_version_code": 2103107,
+-  "purpose": "Synchronize favorites playing/paused indicators and retain the media notification after the last queued track",
+-  "bytes": 25824418,
+-  "sha256": "a0aa71d4232c8534bc89723fd512a5759e612b9f37fa890c614029499d31e820",
++  "apk": "File-Manager-UMEDJON-19.10.apk",
++  "version": "19.10",
++  "version_code": 2103111,
++  "previous_version_code": 2103110,
++  "application_id": "com.umedjon.filemanager",
++  "sha256": "0453b9f02efb653a742eab72999fca7e9f4f491d67609c3cf908a4f6e75c6fbe",
++  "bytes": 25836706,
+   "signing_certificate_sha256": "6259589d30dcf7fb984b1f973ed50c7e2a32372a0eb05c13efaa2cbac554a899",
+-  "application_id": "com.umedjon.filemanager",
+   "changed_java_files": [
+     "FavoritesActivity.java",
+-    "MiniPlayer.java",
+-    "Playback.java"
++    "FavoriteStore.java",
++    "Hooks.java",
++    "Navigation.java"
+   ],
+-  "added_java_files": [],
+-  "changed_smali_files": ["ax/X4/g.smali", "ax/V4/d$a.smali", "com/example/android/uamp/MusicService.smali"],
+-  "changed_resources": ["apktool.yml"],
+-  "scripts_changed": [".github/workflows/build-release.yml", "scripts/emulator-test-197.sh"],
+-  "pdf_database_migrated_from_1_to_2": true,
+-  "backup_engine_unchanged": true,
+-  "zip_crc_verified": true,
+-  "resource_ids": {
+-    "added": [],
+-    "changed": 0,
+-    "removed": 0
++  "added_java_files": [
++    "FavoritesFileActions.java",
++    "FavoritesAutoRelink.java"
++  ],
++  "added_tests": [
++    "tests/release1910/check.py"
++  ],
++  "changed_resources": [
++    "apk/apktool.yml",
++    "apk/res/layout/umedjon_favorites.xml"
++  ],
++  "run_build_local": true,
++  "java_compilation": "passed",
++  "dex_structure": "passed",
++  "signature": "passed",
++  "local_source_tests": {
++    "release194": 6,
++    "release195": 6,
++    "release196": 5,
++    "release197": 9,
++    "release198": 5,
++    "release199": 4,
++    "release1910": 17
+   },
+-  "static_checks": {
+-    "tests/release195/check.py": "6/6 passed",
+-    "tests/release196/check.py": "5/5 passed",
+-    "tests/release197/check.py": "9/9 passed",
+-    "tests/release195/PdfInsertedPageJvm.java": "passed (PDF page insertion and text stream persisted)",
+-    "tests/release194/PdfTextEditJvm.java": "passed (PDF true text replacement)",
+-    "verify_dex": "passed",
+-    "apksigner": "passed"
+-  },
+-  "github_emulator": {
+-    "state": "pending GitHub Actions API 35 KVM run",
+-    "tested_apk_sha256": null,
+-    "upgrade_test": null,
+-    "real_audio_test": null,
+-    "end_of_ten_track_queue_notification_test": null
+-  },
+-  "robolectric": {
+-    "apis": [],
+-    "passed_tests": 0,
+-    "real_device_tested": false,
+-    "screen_reader_application_tested": false
+-  },
+-  "build_host": {
+-    "arch": "x86_64",
+-    "native_tools": "bundled native x86_64 apktool aapt2 and zipalign",
+-    "java": "17"
+-  }
++  "android_emulator": "not_run_by_user_request",
++  "real_android_device": "not_tested",
++  "screen_readers": "not_tested",
++  "ready_for_public_release": false,
++  "notes": "Добавлены файловые операции в избранных треках. Улучшена навигация скринридером в больших папках. Сохранение избранного при перемещении по SHA-256"
+ }
+--- a/README-RU.md
++++ b/README-RU.md
+@@ -1,3 +1,20 @@
++Файловый менеджер UMEDJON 19.10
++Версия: 19.10; versionCode: 2103111.
++Пакет: com.umedjon.filemanager.
++
++Изменения версии 19.10
++
++- «Избранные треки»: длительное нажатие включает доступное выделение; несколько треков, «Выделить всё» и «Снять выделение».
++- Команды копирования, перемещения, переименования, настоящего удаления аудиофайла, отправки и свойств используют существующие средства PortableFiles и FileProvider. Для локальных файлов доступен переход к обычному файловому списку с исходной строкой.
++- «Удалить из избранного» удаляет только запись базы, не трогает аудиофайл. «Удалить файл» требует отдельного подтверждения. При перемещении копия сверяется по SHA-256 до удаления оригинала; запись избранного и сохранённая очередь обновляются при изменении пути.
++- Недоступные файлы остаются доступны для удаления записи из избранного и восстановления; действия, требующие файлового доступа, скрыты.
++- Обычный список: строка получает одно общее описание для скринридера; повторные элементы названия, размера и даты исключены из отдельных остановок, но необходимые отдельные кнопки сохранены. Описание рассчитывается при привязке строки, а не при каждом запросе скринридера.
++- Никакие жесты скринридера не перехватываются, искусственные задержки между свайпами не добавлялись.
++
++Проверки: локальная компиляция, DEX и цифровая подпись прошли. На прямое указание владельца Android Emulator не запускался, в том числе в GitHub Actions. Поэтому последовательное чтение Jieshuo/TalkMan и TalkBack, реальные длительные нажатия, SAF-провайдеры и интерфейс больших папок требуют проверки на устройстве до публичного выпуска.
++
++История изменений
++
+ Файловый менеджер UMEDJON 19.7
+ Версия: 19.7; versionCode: 2103108.
+ Пакет: com.umedjon.filemanager.
+--- a/RESTORE-AND-HANDOFF-RU.md
++++ b/RESTORE-AND-HANDOFF-RU.md
+@@ -1,10 +1,16 @@
+-# Файловый менеджер UMEDJON 19.7 — восстановление проекта
++## Особенности версии 19.10
++
++Изменения в `FavoritesActivity.java`, `FavoritesFileActions.java`, `FavoriteStore.java`, `Hooks.java`, `Navigation.java`. Сборка локально из предоставленного приватного ZIP: `python3 scripts/build.py`. Секреты `keys/` отсутствуют в публичном ZIP и хранятся отдельно в приватном.
++
++Внимание: по последнему указанию владельца эмулятор вообще не запускался. Все сведения о тестировании в старых документах относятся к предыдущим версиям, не к 19.10. До выпуска всем пользователям требуется ручная проверка Jieshuo/TalkMan и TalkBack, в том числе 50/300/1000+ файлов, и корректности файловых операций на разных накопителях и DocumentsProvider.
++
++# Файловый менеджер UMEDJON 19.10 — восстановление проекта
+ 
+ ## Основа
+ 
+ - `applicationId`: `com.umedjon.filemanager`
+-- `versionName`: `19.7`
+-- `versionCode`: `2103108` (опубликованная версия 19.6 имеет `2103107`)
++- `versionName`: `19.10`
++- `versionCode`: `2103111` (опубликованная версия 19.9 имеет `2103110`)
+ - SHA-256 исходного сертификата: `6259589d30dcf7fb984b1f973ed50c7e2a32372a0eb05c13efaa2cbac554a899`
+ - Архитектура: Java-классы из `src/`, оригинальный smali из `apk/smali_classes*`, библиотеки в `lib/`, инструменты в `toolchain/`, сборка в `scripts/build.py`.
+ 
+@@ -16,12 +22,14 @@
+ 2. На Linux x86_64 установить Java 17 и Python 3.11+.
+ 3. Убедиться, что `keys/umedjon.jks` и `keys/signing.json` находятся в каталоге проекта. Пароли и alias уже записаны в приватном комплекте — не пересылать их открытым текстом.
+ 4. Запустить в корне проекта `python3 scripts/build.py`.
+-5. Проверить `output/File-Manager-UMEDJON-19.7.apk`: подпись, пакет, версии и контрольную сумму. Сборщик автоматически отвергает чужой сертификат.
+-6. Проверить установку поверх 19.6 без удаления данных в Android Emulator GitHub Actions.
++5. Проверить `output/File-Manager-UMEDJON-19.10.apk`: подпись, пакет, версии и контрольную сумму. Сборщик автоматически отвергает чужой сертификат.
++6. Перед публикацией проверить установку поверх действующей 19.9 без потери данных на устройстве. Эмулятор не запускать без отдельного разрешения владельца.
+ 
+ ## Публичный архив и GitHub Actions
+ 
+-Публичный ZIP содержит исходники, зависимости, тесты, скрипты и `.github/workflows/build-release.yml`, но **не содержит** приватных ключей и паролей. GitHub Actions восстанавливает исходники из `sources/v19.5/` с патчами `patches/v19.6.patch` и `patches/v19.7.patch`, собирает версию 19.7 и проверяет именно подписанный APK через Android Emulator с KVM. После успешных обязательных проверок создаётся неопубликованный черновик `v19.7`.
++Публичный ZIP содержит актуальные исходники 19.10, зависимости, тесты, скрипты и `.github/workflows/build-release.yml`, но **не содержит** приватных ключей и паролей. GitHub Actions при необходимости восстанавливает исходники из `sources/v19.5/` и патчей `patches/v19.6–v19.10.patch`. По последней инструкции владельца Android Emulator не запускается; команда сборки может выполняться локально. Workflow служит резервной проверкой и подготовкой неопубликованного черновика, если владелец запускает его отдельно.
++
++Проверка в реальном Android не была выполнена и не должна указываться как успешная. При повторной сборке SHA-256 APK может отличаться от локального, поэтому нельзя утверждать, что разные APK идентичны без проверки.
+ 
+ Потребуются четыре GitHub Actions Repository Secrets, устанавливаемые только в настройках репозитория владельцем:
+ 
+@@ -30,7 +38,7 @@
+ - `UMEDJON_KEY_PASS` — пароль ключа.
+ - `UMEDJON_KEY_ALIAS` — alias существующего ключа.
+ 
+-В workflow необходимо запустить `workflow_dispatch`. Action восстанавливает ZIP из исходников в репозитории, keystore — во временном каталоге runner, собирает и проверяет APK, создаёт черновик (или обновляет существующий неопубликованный), прикрепляет APK, публичный ZIP и краткий `update.json`. Workflow не должен публиковать релиз.
++В workflow необходимо запустить `workflow_dispatch`. При ручном запуске Action восстанавливает проект из исходников в репозитории, keystore — во временном каталоге runner, собирает и проверяет APK, создаёт черновик (или обновляет существующий неопубликованный), прикрепляет APK, публичный ZIP и краткий `update.json`. Android Emulator в текущем workflow отключён по указанию владельца. Workflow не должен публиковать релиз.
+ 
+ Проверить успешный статус Actions, Assets черновика, пакет, версию и SHA-256. Публикует выпуск только UMEDJON после личного тестирования.
+ 
+--- a/VERIFICATION-RU.txt
++++ b/VERIFICATION-RU.txt
+@@ -1,3 +1,21 @@
++Файловый менеджер UMEDJON 19.10 · com.umedjon.filemanager · versionCode 2103111
++
++ЛОКАЛЬНАЯ СБОРКА: scripts/build.py — успешно.
++Сертификат оригинальной подписи SHA-256: 6259589d30dcf7fb984b1f973ed50c7e2a32372a0eb05c13efaa2cbac554a899
++APK: 25836706 байт; SHA-256 0453b9f02efb653a742eab72999fca7e9f4f491d67609c3cf908a4f6e75c6fbe
++DEX: scripts/verify_dex.py — успешно.
++52 локальных проверки release194,195,196,197,198,199,1910 — успешно.
++
++Добавлено: длительное нажатие и мультивыделение в избранном, операции с файлами, отдельно «Удалить из избранного» и «Удалить файл».
++Используются тот же FileListView, filelist_item и checkbox, что в обычном списке.
++Перемещение/переименование из избранного обновляет реальный путь записи; при перемещении из другого экрана асинхронно проверяется сохранённый отпечаток SHA-256 и перепривязывается только единственное точное совпадение.
++Дублирующие пассивные подписи строк файлов исключаются из отдельных элементов доступности.
++
++НЕ ВЫПОЛНЯЛОСЬ ПО ПРОСЬБЕ ВЛАДЕЛЬЦА: Android Emulator (включая GitHub Actions).
++НЕ ПОДТВЕРЖДЕНО: работа TalkBack/Jieshuo/TalkMan на устройстве, реальные копирования и перемещения на различных DocumentsProvider, свайпы в папках 50/300/1000+ файлов.
++Статические проверки не заменяют испытания интерфейса на Android. Выпуск не публиковался.
++
++--- Исторические отчёты ---
+ Файловый менеджер UMEDJON 19.6 · versionName 19.6 · versionCode 2103107 · пакет com.umedjon.filemanager
+ 
+ ПРОВЕРКИ 19.6 (локально, без утверждений о тестировании на телефоне):
+--- a/scripts/package-release195.py
++++ b/scripts/package-release195.py
+@@ -44,6 +44,7 @@
+         assert check.testzip() is None
+         filenames=set(check.namelist())
+         for required in ['scripts/build.py','src/com/umedjon/filemanager/PdfEditorActivity.java',
++                         'src/com/umedjon/filemanager/FavoritesFileActions.java',
+                          'src/com/umedjon/filemanager/PdfEditorOutput.java',
+                          'src/com/umedjon/filemanager/PhotoPdfProgressDialog.java',
+                          '.github/workflows/build-release.yml',*tool_files]:
+--- a/apk/res/layout/umedjon_favorites.xml
++++ b/apk/res/layout/umedjon_favorites.xml
+@@ -4,7 +4,7 @@
+     <LinearLayout android:orientation="vertical" android:layout_width="fill_parent" android:layout_height="fill_parent">
+         <androidx.appcompat.widget.Toolbar android:id="@id/toolbar" android:layout_width="fill_parent" android:layout_height="?actionBarSize" android:minHeight="?actionBarSize" app:navigationContentDescription="@string/abc_action_bar_up_description" style="@style/ToolbarStyle.Default" />
+         <View android:background="@color/actionbar_separator" android:layout_width="fill_parent" android:layout_height="1.0dip" />
+-<FrameLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"><ListView android:id="@+id/umedjon_favorites_list" android:layout_width="match_parent" android:layout_height="match_parent" android:dividerHeight="0dp"/><TextView android:id="@+id/umedjon_empty" android:layout_width="match_parent" android:layout_height="match_parent" android:gravity="center" android:text="Нет избранных треков" /></FrameLayout>
++<FrameLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"><com.alphainventor.filemanager.widget.FileListView android:id="@+id/umedjon_favorites_list" android:layout_width="match_parent" android:layout_height="match_parent" android:dividerHeight="0dp"/><TextView android:id="@+id/umedjon_empty" android:layout_width="match_parent" android:layout_height="match_parent" android:gravity="center" android:text="Нет избранных треков" /></FrameLayout>
+ <include android:id="@+id/umedjon_favorites_player" android:layout_width="match_parent" android:layout_height="wrap_content" layout="@layout/fragment_playback_controls" />
+     </LinearLayout>
+ </com.alphainventor.filemanager.widget.WindowInsetsFrameLayout>
+--- a/src/com/umedjon/filemanager/FavoritesActivity.java
++++ b/src/com/umedjon/filemanager/FavoritesActivity.java
+@@ -1,9 +1,11 @@
+ package com.umedjon.filemanager;
+-import android.os.*;import android.content.*;import android.content.res.ColorStateList;import android.media.MediaMetadata;import android.media.session.*;import android.net.Uri;import android.text.TextUtils;import android.view.*;import android.widget.*;import java.util.*;
++import android.os.*;import android.content.*;import android.content.res.ColorStateList;import android.media.MediaMetadata;import android.media.session.*;import android.net.Uri;import android.text.TextUtils;import android.view.*;import android.view.accessibility.AccessibilityNodeInfo;import android.widget.*;import java.util.*;
+ public final class FavoritesActivity extends ax.V2.c {
+  public boolean isContentClipToPadding(boolean ime){return true;}
+  public void onApplyWindowsInsets(ax.T.b insets,boolean clipped){}
+- List<String[]> tracks=new ArrayList<>();MiniPlayer mini;
++ List<String[]> tracks=new ArrayList<>();MiniPlayer mini;BaseAdapter adapter;
++ final LinkedHashSet<String> selected=new LinkedHashSet<>();ActionMode selectionMode;
++ boolean fileBusy;
+  String currentSource,currentMediaId;int currentState=PlaybackState.STATE_NONE;int playingColor;
+  String pendingFocusUri;
+  boolean sourceInFavorites;int mediaIdMatches;
+@@ -25,6 +27,7 @@
+   TextView name=row.findViewById(Bridge.res(this,"id","filename"));
+   ImageView marker=row.findViewById(Bridge.res(this,"id","subicon"));
+   boolean active=isCurrent(track),playing=active&&currentState==PlaybackState.STATE_PLAYING;
++  boolean marked=selected.contains(track[0]);
+   ColorStateList original=(ColorStateList)row.getTag();
+   name.setTextColor(active?ColorStateList.valueOf(playingColor):original);
+   marker.setVisibility(active?View.VISIBLE:View.GONE);
+@@ -36,8 +39,31 @@
+   marker.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+   View container=row.findViewById(Bridge.res(this,"id","item_container"));
+   String label=name.getText().toString();
++  if(isMissing(track))label+=", файл недоступен";
+   if(active)label+=playing?", сейчас воспроизводится":", пауза";
+-  container.setContentDescription(label);
++  if(marked)label= "Выделено, "+label;
++  if(!TextUtils.equals(container.getContentDescription(),label))container.setContentDescription(label);
++  container.setSelected(marked);row.setActivated(marked);
++  // Use the original file-list checkbox stub and selector. This is the
++  // same selection affordance as the normal folder and Audio category.
++  int selectionId=Bridge.res(this,"id","umedjon_selection_checkbox");
++  View checkbox=row.findViewById(selectionId);
++  if(checkbox==null){
++   View stub=row.findViewById(Bridge.res(this,"id","stub_checkbox"));
++   if(stub instanceof ViewStub)checkbox=((ViewStub)stub).inflate();
++  }
++  if(checkbox!=null){
++   checkbox.setVisibility(selectionMode==null?View.GONE:View.VISIBLE);
++   checkbox.setActivated(marked);
++   checkbox.setClickable(false);checkbox.setFocusable(false);
++   checkbox.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
++   // The native drawable listens to state_activated. Propagate this to the
++   // visual child without exposing a duplicate screen-reader stop.
++   if(checkbox instanceof ViewGroup){
++    ViewGroup group=(ViewGroup)checkbox;
++    for(int i=0;i<group.getChildCount();i++)group.getChildAt(i).setActivated(marked);
++   }
++  }
+  }
+  void refreshVisibleRows(){
+   ListView list=findViewById(Bridge.res(this,"id","umedjon_favorites_list"));
+@@ -63,55 +89,150 @@
+   currentSource=source;currentMediaId=id;currentState=state;
+   recalculateMatches();refreshVisibleRows();
+  }
+- public void onCreate(Bundle b){Bridge.stat("ax.U2.b","f",this,true);super.onCreate(b);setContentView(Bridge.res(this,"layout","umedjon_favorites"));Bridge.call(this,"onSetContentView",true);setTitle("Избранные треки");int color=Bridge.res(this,"color","bt_accent");playingColor=color==0?android.graphics.Color.CYAN:getResources().getColor(color);mini=new MiniPlayer(this,findViewById(Bridge.res(this,"id","umedjon_favorites_player")),this::onPlaybackChanged);}
+- protected void onResume(){
+-  super.onResume();
+-  try(FavoriteStore db=new FavoriteStore(this)){tracks=db.all();}
+-  recalculateMatches();
+-  ListView list=findViewById(Bridge.res(this,"id","umedjon_favorites_list"));
+-  list.setAdapter(new BaseAdapter(){
++ public void onCreate(Bundle b){
++  Bridge.stat("ax.U2.b","f",this,true);super.onCreate(b);
++  setContentView(Bridge.res(this,"layout","umedjon_favorites"));Bridge.call(this,"onSetContentView",true);
++  setTitle("Избранные треки");int color=Bridge.res(this,"color","bt_accent");
++  playingColor=color==0?android.graphics.Color.CYAN:getResources().getColor(color);
++  mini=new MiniPlayer(this,findViewById(Bridge.res(this,"id","umedjon_favorites_player")),this::onPlaybackChanged);
++  ListView list=favoritesList();
++  adapter=new BaseAdapter(){
+    public int getCount(){return tracks.size();}
+    public Object getItem(int p){return tracks.get(p);}
+-   public long getItemId(int p){return p;}
++   public long getItemId(int p){String logical=tracks.get(p)[5];return stableId(logical==null?tracks.get(p)[0]:logical);}
++   public boolean hasStableIds(){return true;}
+    public View getView(int p,View view,ViewGroup parent){
+     if(view==null){
+      view=getLayoutInflater().inflate(Bridge.res(FavoritesActivity.this,"layout","filelist_item"),parent,false);
+      TextView plain=view.findViewById(Bridge.res(FavoritesActivity.this,"id","filename"));
+      view.setTag(plain.getTextColors());
+     }
+-    String[] t=tracks.get(p);
++    String[] track=tracks.get(p);
+     TextView name=view.findViewById(Bridge.res(FavoritesActivity.this,"id","filename"));
+-    String title=t[2]==null||t[2].isEmpty()?Uri.parse(t[0]).getLastPathSegment():t[2];
++    String title=track[2]==null||track[2].isEmpty()?Uri.parse(track[0]).getLastPathSegment():track[2];
+     name.setText(title==null?"Музыка":title);
+     ImageView icon=view.findViewById(Bridge.res(FavoritesActivity.this,"id","icon"));
+     int image=Bridge.res(FavoritesActivity.this,"drawable","ic_v_audio");
+-    if(image==0)image=android.R.drawable.ic_media_play;
+-    icon.setImageResource(image);
++    icon.setImageResource(image==0?android.R.drawable.ic_media_play:image);
++    ((ViewGroup)view).setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
+     View container=view.findViewById(Bridge.res(FavoritesActivity.this,"id","item_container"));
+-    if(isMissing(t))name.setText(name.getText()+". Файл не найден. Нажмите для восстановления");
+-    container.setOnClickListener(v->play(p));
+-    view.setOnClickListener(v->play(p));
+-    decorate(view,t);
++    container.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
++    view.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
++    // All passive children are part of a single spoken track description.
++    quietFavoriteChildren(container,container);
++    container.setOnClickListener(v->tap(track[0]));
++    container.setOnLongClickListener(v->{toggle(track[0]);return true;});
++    final View itemView=view;
++    container.setAccessibilityDelegate(new View.AccessibilityDelegate(){
++     public void onInitializeAccessibilityNodeInfo(View v,AccessibilityNodeInfo info){
++      super.onInitializeAccessibilityNodeInfo(v,info);
++      boolean marked=selected.contains(track[0]);info.setSelected(marked);
++      info.setCheckable(selectionMode!=null);info.setChecked(marked);
++      info.addAction(new AccessibilityNodeInfo.AccessibilityAction(
++       AccessibilityNodeInfo.ACTION_LONG_CLICK,marked?"Снять выделение":"Выделить трек"));
++     }
++     public boolean performAccessibilityAction(View v,int action,Bundle args){
++      if(action==AccessibilityNodeInfo.ACTION_LONG_CLICK){toggle(track[0]);return true;}
++      return super.performAccessibilityAction(v,action,args);
++     }
++    });
++    itemView.setOnLongClickListener(v->{toggle(track[0]);return true;});
++    decorate(view,track);
+     return view;
+    }
+-  });
+-  list.setOnItemClickListener((a,v,p,id)->play(p));
+-  TextView empty=findViewById(Bridge.res(this,"id","umedjon_empty"));
+-  list.setEmptyView(empty);
+-  onPlaybackChanged();
+-  // The widget can bring a fresh FavoritesActivity over an existing task.
+-  // Wait for window focus: scrolling during onResume can be undone when the
+-  // window first attaches or when its list is laid out after the transition.
++  };
++  list.setAdapter(adapter);
++  list.setOnItemClickListener((a,v,p,id)->tap(tracks.get(p)[0]));
++  list.setOnItemLongClickListener((a,v,p,id)->{toggle(tracks.get(p)[0]);return true;});
++  TextView empty=findViewById(Bridge.res(this,"id","umedjon_empty"));list.setEmptyView(empty);
++ }
++ static void quietFavoriteChildren(View root,View ancestor){
++  if(root!=ancestor&&root instanceof TextView){root.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);root.setFocusable(false);}
++  if(root instanceof ImageView)root.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
++  if(root instanceof ViewGroup){ViewGroup g=(ViewGroup)root;for(int i=0;i<g.getChildCount();i++)quietFavoriteChildren(g.getChildAt(i),ancestor);}
++ }
++ static long stableId(String key){long hash=0xcbf29ce484222325L;
++  for(int i=0;i<key.length();i++){hash^=key.charAt(i);hash*=0x100000001b3L;}
++  return hash;
++ }
++ ListView favoritesList(){return findViewById(Bridge.res(this,"id","umedjon_favorites_list"));}
++ void reload(boolean retainPosition){
++  ListView list=favoritesList();int first=list.getFirstVisiblePosition();View top=list.getChildAt(0);
++  String anchored=first<tracks.size()?tracks.get(first)[0]:null;
++  int offset=top==null?0:top.getTop()-list.getPaddingTop();
++  List<String[]> latest;try(FavoriteStore db=new FavoriteStore(this)){latest=db.all();}
++  boolean changed=tracks.size()!=latest.size();
++  if(!changed)for(int i=0;i<tracks.size();i++)if(!Arrays.equals(tracks.get(i),latest.get(i))){changed=true;break;}
++  if(changed){tracks=latest;selected.retainAll(idsOf(tracks));adapter.notifyDataSetChanged();
++   if(retainPosition&&!tracks.isEmpty()){
++    int restored=-1;
++    if(anchored!=null)for(int i=0;i<tracks.size();i++)if(anchored.equals(tracks.get(i)[0])){restored=i;break;}
++    list.setSelectionFromTop(restored<0?Math.min(first,tracks.size()-1):restored,offset);
++   }}
++  if(selectionMode!=null){if(selected.isEmpty())selectionMode.finish();else selectionMode.invalidate();}
++  recalculateMatches();refreshVisibleRows();
++ }
++ static Set<String> idsOf(List<String[]> rows){Set<String> ids=new HashSet<>();for(String[] t:rows)ids.add(t[0]);return ids;}
++ protected void onResume(){
++  super.onResume();reload(true);onPlaybackChanged();FavoritesAutoRelink.check(this);
++  // Playback-source widget navigation remains unchanged.
+   String focus=getIntent().getStringExtra("umedjon.focus_uri");
+-  if(focus!=null){
+-   pendingFocusUri=focus;
+-   getIntent().removeExtra("umedjon.focus_uri");
+-   // Some Android launch paths reuse the window without dispatching another
+-   // onWindowFocusChanged(true). This fallback is single-shot: the first
+-   // successful callback consumes pendingFocusUri; subsequent ones do nothing.
+-   list.postDelayed(this::applyPendingFocus,450);
+-  }
+- }
++  if(focus!=null){pendingFocusUri=focus;getIntent().removeExtra("umedjon.focus_uri");
++   favoritesList().postDelayed(this::applyPendingFocus,450);}
++ }
++ void tap(String uri){
++  if(fileBusy)return;
++  if(selectionMode!=null){toggle(uri);return;}
++  for(int i=0;i<tracks.size();i++)if(uri.equals(tracks.get(i)[0])){play(i);return;}
++ }
++ void toggle(String uri){
++  if(fileBusy)return;
++  if(selectionMode==null){selectionMode=startActionMode(selectionActions);if(selectionMode==null)return;}
++  if(!selected.add(uri))selected.remove(uri);
++  if(selected.isEmpty())selectionMode.finish();
++  else selectionMode.invalidate();
++  refreshVisibleRows();
++ }
++ final ActionMode.Callback selectionActions=new ActionMode.Callback(){
++  public boolean onCreateActionMode(ActionMode mode,Menu menu){
++   menu.add(0,1,1,"Выделить всё");menu.add(0,2,2,"Снять выделение");
++   menu.add(0,3,3,"Копировать");menu.add(0,4,4,"Переместить");
++   menu.add(0,5,5,"Переименовать");menu.add(0,6,6,"Удалить файл");
++   menu.add(0,7,7,"Поделиться");menu.add(0,8,8,"Свойства");
++   menu.add(0,9,9,"Удалить из избранного");
++   menu.add(0,10,10,"Открыть в обычной папке");
++   return true;
++  }
++  public boolean onPrepareActionMode(ActionMode mode,Menu menu){
++   mode.setTitle("Выбрано: "+selected.size());
++   boolean allAvailable=!selected.isEmpty(),allWritable=allAvailable,single=selected.size()==1;
++   for(String uri:selected){
++    if(!FavoritesFileActions.readable(FavoritesActivity.this,uri))allAvailable=false;
++    if(!FavoritesFileActions.writable(FavoritesActivity.this,uri))allWritable=false;
++   }
++   menu.findItem(3).setVisible(allAvailable);
++   menu.findItem(4).setVisible(allWritable);
++   menu.findItem(5).setVisible(single&&allWritable);
++   menu.findItem(6).setVisible(allWritable);
++   menu.findItem(7).setVisible(allAvailable);
++   menu.findItem(8).setVisible(single&&allAvailable);
++   menu.findItem(10).setVisible(single&&allAvailable&&FavoritesFileActions.local(selected.iterator().next()));
++   menu.findItem(1).setVisible(selected.size()<tracks.size());
++   return true;
++  }
++  public boolean onActionItemClicked(ActionMode mode,MenuItem action){
++   switch(action.getItemId()){
++    case 1:for(String[] t:tracks)selected.add(t[0]);mode.invalidate();refreshVisibleRows();return true;
++    case 2:selected.clear();mode.finish();return true;
++    case 3:case 4:case 5:case 6:case 7:case 8:case 9:case 10:
++     FavoritesFileActions.perform(FavoritesActivity.this,action.getItemId(),new ArrayList<>(selected));return true;
++    default:return false;
++   }
++  }
++  public void onDestroyActionMode(ActionMode mode){selectionMode=null;selected.clear();refreshVisibleRows();}
++ };
++ void filesChanged(){reload(true);}
++ void finishSelection(){if(selectionMode!=null)selectionMode.finish();}
+  @Override public void onWindowFocusChanged(boolean hasFocus){
+   super.onWindowFocusChanged(hasFocus);
+   if(hasFocus)applyPendingFocus();
+@@ -125,6 +246,10 @@
+    Navigation.focusRow(list,i);break;
+   }
+  }
++ @Override protected void onActivityResult(int requestCode,int resultCode,Intent data){
++  super.onActivityResult(requestCode,resultCode,data);
++  if(requestCode==FavoritesFileActions.DESTINATION)FavoritesFileActions.destination(this,resultCode,data);
++ }
+  protected void onStart(){super.onStart();mini.start();}
+  protected void onStop(){mini.stop();super.onStop();}
+  public boolean onCreateOptionsMenu(android.view.Menu menu){super.onCreateOptionsMenu(menu);menu.add("Найти отсутствующие файлы").setOnMenuItemClickListener(i->{startActivity(new Intent(this,RelinkActivity.class));return true;});return true;}
+--- /dev/null
++++ b/src/com/umedjon/filemanager/FavoritesFileActions.java
+@@ -0,0 +1,267 @@
++package com.umedjon.filemanager;
++
++import android.app.*;
++import android.content.*;
++import android.database.*;
++import android.media.MediaMetadata;
++import android.media.session.PlaybackState;
++import android.net.Uri;
++import android.os.*;
++import android.provider.DocumentsContract;
++import android.text.InputType;
++import android.widget.*;
++import java.io.*;
++import java.util.*;
++import java.util.concurrent.atomic.AtomicBoolean;
++
++/** File operations from Favorites share the same storage handling as the
++ * backup, duplicates and normal file sharing flows: PortableFiles and the
++ * existing MyFileProvider. Favorites are only pointers to real files. */
++final class FavoritesFileActions {
++ static final int DESTINATION=910;
++ static ArrayList<String> pending;
++ static boolean moving;
++ static final AtomicBoolean cancel=new AtomicBoolean();
++ static boolean readable(Context c,String raw){return allowed(c,raw,false);}
++ static boolean writable(Context c,String raw){return allowed(c,raw,true);}
++ static boolean allowed(Context c,String raw,boolean write){
++  try{
++   Uri uri=Uri.parse(raw);
++   if("file".equals(uri.getScheme())){
++    File file=new File(uri.getPath());return file.isFile()&&file.canRead()&&(!write||file.canWrite());
++   }
++   if(!"content".equals(uri.getScheme()))return false;
++   int mode=write?Intent.FLAG_GRANT_WRITE_URI_PERMISSION:Intent.FLAG_GRANT_READ_URI_PERMISSION;
++   return c.checkUriPermission(uri,android.os.Process.myPid(),android.os.Process.myUid(),mode)==
++    android.content.pm.PackageManager.PERMISSION_GRANTED;
++  }catch(Exception ignored){}return false;
++ }
++ static boolean local(String raw){return "file".equals(Uri.parse(raw).getScheme());}
++ static boolean active(String uri){
++  try{if(Playback.controller==null||Playback.controller.getMetadata()==null)return false;
++   PlaybackState state=Playback.controller.getPlaybackState();
++   return state!=null&&(state.getState()==PlaybackState.STATE_PLAYING||
++    state.getState()==PlaybackState.STATE_PAUSED||state.getState()==PlaybackState.STATE_BUFFERING)&&
++    uri.equals(Playback.controller.getMetadata().getString("__SOURCE__"));
++  }catch(Exception ignored){return false;}
++ }
++ static boolean inLiveQueue(Context c,String uri){
++  if(!Playback.sessionActive())return false;
++  return PlaybackMemory.contains(PlaybackMemory.decode(Playback.prefs(c).getString("queue","[]")),uri);
++ }
++ static void replaceQueueEntry(Context c,String old,String next,String folder){
++  SharedPreferences p=Playback.prefs(c);ArrayList<android.util.Pair<Uri,String>> current=
++   PlaybackMemory.decode(p.getString("queue","[]"));
++  ArrayList<android.util.Pair<Uri,String>> changed=new ArrayList<>();
++  for(android.util.Pair<Uri,String> item:current){
++   if(item.first.toString().equals(old)){
++    if(next!=null)changed.add(android.util.Pair.create(Uri.parse(next),next));
++   }else changed.add(item);
++  }
++  SharedPreferences.Editor edit=p.edit().putString("queue",PlaybackMemory.encode(changed));
++  if(old.equals(p.getString("uri",null))){
++   if(next==null)edit.remove("uri").remove("media_id").remove("folder").putLong("position",0);
++   else edit.putString("uri",next).putString("media_id",next).putString("folder",folder)
++    .putString("origin_folder",folder);
++  }
++  edit.commit();
++ }
++ static void perform(FavoritesActivity a,int action,ArrayList<String> source){
++  if(source.isEmpty())return;
++  if(action==9){removeFavorites(a,source);return;}
++  if(action==8){properties(a,source.get(0));return;}
++  if(action==10){openFolder(a,source.get(0));return;}
++  if(action==7){share(a,source);return;}
++  if(action==5){rename(a,source.get(0));return;}
++  if(action==6){deleteFiles(a,source);return;}
++  if(action==3||action==4){
++   if(action==4)for(String uri:source)if(inLiveQueue(a,uri)){
++    message(a,"Сначала остановите воспроизведение выбранного трека перед перемещением.");return;}
++   pending=source;moving=action==4;
++   Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
++    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_WRITE_URI_PERMISSION|
++              Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
++   try{a.startActivityForResult(i,DESTINATION);}catch(Exception e){message(a,"Нет доступного выбора папки: "+e.getMessage());}
++  }
++ }
++ static void destination(FavoritesActivity a,int result,Intent data){
++  ArrayList<String> source=pending;boolean move=moving;pending=null;
++  if(result!=Activity.RESULT_OK||data==null||source==null)return;
++  Uri root=data.getData();if(root==null)return;
++  try{a.getContentResolver().takePersistableUriPermission(root,
++   data.getFlags()&(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_WRITE_URI_PERMISSION));}
++  catch(SecurityException ignored){}
++  work(a,move?"Перемещение файлов":"Копирование файлов",()->{
++   int count=0;StringBuilder failures=new StringBuilder();
++   for(String sourceUri:source){
++    if(cancel.get())break;
++    try{
++     PortableFiles.Entry entry=PortableFiles.stat(a,sourceUri);
++     Uri parent=DocumentsContract.buildDocumentUriUsingTree(root,DocumentsContract.getTreeDocumentId(root));
++     Uri created=DocumentsContract.createDocument(a.getContentResolver(),parent,"audio/*",entry.name);
++     if(created==null)throw new IOException("Не удалось создать файл в выбранной папке");
++     boolean relocated=false,deleted=false;
++     try{
++      try(InputStream input=PortableFiles.open(a,sourceUri);
++          OutputStream output=a.getContentResolver().openOutputStream(created,"w")){
++       if(output==null)throw new IOException("Нет доступа на запись");
++       byte[] buffer=new byte[131072];int n;
++       while((n=input.read(buffer))!=-1){if(cancel.get())throw new InterruptedIOException("Отмена");output.write(buffer,0,n);}
++       output.flush();
++      }
++      if(move){
++       // Never delete the source unless the actual bytes match. Use existing
++       // PortableFiles hashing rather than trusting a reported document size.
++       String before=PortableFiles.hash(a,PortableFiles.stat(a,sourceUri),cancel);
++       String after=PortableFiles.hash(a,PortableFiles.stat(a,created.toString()),cancel);
++       if(!before.equals(after))throw new IOException("Копия не совпадает с оригиналом");
++       // First update the database atomically; only then remove the original.
++       // If removal fails, roll the database back and retain the original.
++       relocate(a,sourceUri,created.toString(),parent.toString());relocated=true;
++       if(!PortableFiles.delete(a,entry)){
++        relocate(a,created.toString(),sourceUri,entry.parent);relocated=false;
++        throw new IOException("Оригинал не удалён; перемещение отменено");
++       }
++       deleted=true;
++      }
++      count++;
++     }catch(Exception failure){
++      if(!deleted&&!relocated)try{DocumentsContract.deleteDocument(a.getContentResolver(),created);}catch(Exception ignored){}
++      throw failure;
++     }
++    }catch(Exception error){failures.append("\n").append(display(sourceUri)).append(": ").append(error.getMessage());}
++   }
++   return (move?"Перемещено: ":"Скопировано: ")+count+" из "+source.size()+
++    (cancel.get()?". Операция отменена":"")+failures;
++  });
++ }
++ static void rename(FavoritesActivity a,String source){
++  if(inLiveQueue(a,source)){message(a,"Сначала остановите воспроизведение перед переименованием файла из текущей очереди.");return;}
++  Uri uri=Uri.parse(source);String old=display(source);
++  EditText input=new EditText(a);input.setSingleLine(true);input.setInputType(InputType.TYPE_CLASS_TEXT);
++  input.setText(old);input.setSelectAllOnFocus(true);input.setContentDescription("Новое имя файла");
++  new AlertDialog.Builder(a).setTitle("Переименовать файл").setView(input)
++   .setNegativeButton("Отмена",null).setPositiveButton("Переименовать",(d,w)->{
++    String filename=input.getText().toString().trim();
++    if(filename.isEmpty()||filename.equals(".")||filename.equals("..")||filename.contains("/")||filename.contains("\\")){
++     message(a,"Недопустимое имя файла");return;}
++    work(a,"Переименование",()->{
++     Uri destination;
++     if(local(source)){
++      File oldFile=new File(uri.getPath()),next=new File(oldFile.getParentFile(),filename);
++      if(next.exists())throw new IOException("Файл с таким именем уже существует");
++      if(!oldFile.renameTo(next))throw new IOException("Не удалось переименовать файл");
++      destination=Uri.fromFile(next);
++      try{relocate(a,source,destination.toString(),Uri.fromFile(next.getParentFile()).toString());}
++      catch(Exception e){if(!next.renameTo(oldFile))throw new IOException("Переименование удалось, но обновить избранное не удалось. Новый путь: "+next,e);throw e;}
++      return "Файл переименован: "+filename;
++     }else{
++      destination=DocumentsContract.renameDocument(a.getContentResolver(),uri,filename);
++      if(destination==null)throw new IOException("Переименование не поддерживается для этого источника");
++     }
++     String parent=local(destination.toString())?Uri.fromFile(new File(destination.getPath()).getParentFile()).toString():
++      parentOf(a,destination.toString());
++     relocate(a,source,destination.toString(),parent);
++     return "Файл переименован: "+filename;
++    });
++   }).show();
++ }
++ static String parentOf(Context c,String raw){try{return PortableFiles.stat(c,raw).parent;}catch(Exception e){return null;}}
++ static void relocate(Context c,String old,String updated,String folder)throws Exception{
++  long position;
++  try(FavoriteStore db=new FavoriteStore(c)){
++   String previousId=db.mediaId(old);
++   position=PlaybackMemory.position(c,old,previousId);
++   db.relocate(old,updated,updated,folder);
++  }
++  PlaybackMemory.position(c,updated,updated,position,true);
++  replaceQueueEntry(c,old,updated,folder);
++ }
++ static void removeFavorites(FavoritesActivity a,List<String> selected){
++  new AlertDialog.Builder(a).setTitle("Удалить из избранного?")
++   .setMessage("Будут удалены только записи в избранном ("+selected.size()+"). Сами аудиофайлы останутся на устройстве.")
++   .setNegativeButton("Отмена",null).setPositiveButton("Удалить из избранного",(d,w)->{
++    try(FavoriteStore db=new FavoriteStore(a)){for(String source:selected)db.removeUri(source);}
++    a.finishSelection();a.filesChanged();message(a,"Удалено из избранного: "+selected.size());
++   }).show();
++ }
++ static void deleteFiles(FavoritesActivity a,List<String> sources){
++  for(String source:sources)if(inLiveQueue(a,source)){
++   message(a,"Сначала остановите воспроизведение выбранного трека перед удалением файла.");return;}
++  new AlertDialog.Builder(a).setTitle("Удалить аудиофайлы?")
++   .setMessage("Будет безвозвратно удалено файлов: "+sources.size()+". Это НЕ удаление только из избранного.")
++   .setNegativeButton("Отмена",null).setPositiveButton("Удалить файл",(d,w)->work(a,"Удаление файлов",()->{
++    int count=0;StringBuilder errors=new StringBuilder();
++    for(String raw:sources){if(cancel.get())break;try{
++     PortableFiles.Entry source=PortableFiles.stat(a,raw);
++     if(!PortableFiles.delete(a,source))throw new IOException("Файл не удалён");
++     try(FavoriteStore db=new FavoriteStore(a)){db.removeUri(raw);}
++     replaceQueueEntry(a,raw,null,null);count++;
++    }catch(Exception e){errors.append("\n").append(display(raw)).append(": ").append(e.getMessage());}}
++    return "Удалено файлов: "+count+" из "+sources.size()+errors;
++   })).show();
++ }
++ static void properties(FavoritesActivity a,String uri){
++  work(a,"Свойства файла",()->{
++   PortableFiles.Entry e=PortableFiles.stat(a,uri);
++   return "Название: "+e.name+"\nИсточник: "+e.path+"\nРазмер: "+e.size+" байт\nИзменён: "+
++    java.text.DateFormat.getDateTimeInstance().format(new java.util.Date(e.modified));
++  });
++ }
++ static void share(FavoritesActivity a,List<String> sources){
++  try{
++   ArrayList<Uri> uris=new ArrayList<>();
++   for(String raw:sources){Uri src=Uri.parse(raw);
++    if(local(raw))uris.add(ShareCompat.uriFor(a,new File(src.getPath())));
++    else uris.add(src);
++   }
++   Intent send=new Intent(uris.size()==1?Intent.ACTION_SEND:Intent.ACTION_SEND_MULTIPLE);
++   send.setType("audio/*").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
++   ClipData clip=ClipData.newRawUri("audio",uris.get(0));
++   for(int i=1;i<uris.size();i++)clip.addItem(new ClipData.Item(uris.get(i)));
++   send.setClipData(clip);
++   if(uris.size()==1)send.putExtra(Intent.EXTRA_STREAM,uris.get(0));
++   else send.putParcelableArrayListExtra(Intent.EXTRA_STREAM,uris);
++   a.startActivity(Intent.createChooser(send,"Поделиться аудиофайлами"));
++  }catch(Exception e){message(a,"Не удалось поделиться: "+e.getMessage());}
++ }
++ static void openFolder(FavoritesActivity a,String uri){
++  if(!local(uri)){message(a,"Для этого источника сначала выберите файл в системном проводнике.");return;}
++  File file=new File(Uri.parse(uri).getPath());
++  if(!file.isFile()){message(a,"Файл отсутствует");return;}
++  // Reuse the native file manager's own directory listing and selection tools.
++  File root=Environment.getExternalStorageDirectory();
++  String path=file.getParentFile().getAbsolutePath();
++  if(!path.startsWith(root.getAbsolutePath()+"/")){message(a,"Папка недоступна в обычном списке");return;}
++  String folder=new Uri.Builder().scheme("main").authority("0").path(path).build().toString();
++  Intent open=new Intent().setClassName(a,"com.alphainventor.filemanager.activity.MainActivity")
++   .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP)
++   .putExtra("umedjon.favorite.folder",folder).putExtra("umedjon.favorite.file_uri",uri);
++  a.finishSelection();a.startActivity(open);
++ }
++ static String display(String uri){String text=Uri.parse(uri).getLastPathSegment();return text==null?uri:text;}
++ interface Job{String execute()throws Exception;}
++ static void work(FavoritesActivity a,String title,Job job){
++  if(a.fileBusy)return;a.fileBusy=true;cancel.set(false);
++  ProgressBar progress=new ProgressBar(a);
++  int padding=(int)(20*a.getResources().getDisplayMetrics().density);
++  progress.setPadding(padding,padding,padding,padding);
++  AlertDialog dialog=new AlertDialog.Builder(a).setTitle(title).setView(progress)
++   .setNegativeButton("Отменить",(d,w)->cancel.set(true)).create();
++  dialog.setCanceledOnTouchOutside(false);dialog.setOnCancelListener(d->cancel.set(true));dialog.show();
++  new Thread(()->{
++   String outcome;
++   try{outcome=job.execute();}catch(Exception e){outcome="Операция не выполнена: "+e.getMessage();}
++   final String text=outcome;
++   a.runOnUiThread(()->{
++    a.fileBusy=false;
++    if(a.isFinishing()||a.isDestroyed())return;
++    if(dialog.isShowing())dialog.dismiss();
++    a.finishSelection();a.filesChanged();
++    message(a,text);
++   });
++  },"UMEDJON-favorites-files").start();
++ }
++ static void message(Context context,String text){new AlertDialog.Builder(context).setMessage(text)
++  .setPositiveButton("Закрыть",null).show();}
++}
+--- /dev/null
++++ b/src/com/umedjon/filemanager/FavoritesAutoRelink.java
+@@ -0,0 +1,86 @@
++package com.umedjon.filemanager;
++
++import android.content.Context;
++import android.net.Uri;
++import android.os.Handler;
++import android.os.Looper;
++import java.lang.ref.WeakReference;
++import java.util.*;
++import java.util.concurrent.atomic.AtomicBoolean;
++import org.json.*;
++
++/** Reconnect a favorite after the stock file manager (or another app) moves
++ * its original file. Never guess using title, filename or size alone. */
++final class FavoritesAutoRelink {
++ private static final AtomicBoolean running=new AtomicBoolean();
++ private static final long RETRY_MS=60000;
++ private static volatile long lastAttempt;
++ private static final String TAG="UMEDJON_FAVORITE_RELINK";
++ private static final class Missing {
++  final String uri,sha;final long size;
++  Missing(String uri,String sha,long size){this.uri=uri;this.sha=sha;this.size=size;}
++ }
++ static void check(FavoritesActivity activity){
++  if(!running.compareAndSet(false,true))return;
++  long now=android.os.SystemClock.elapsedRealtime();
++  if(now-lastAttempt<RETRY_MS){running.set(false);return;}
++  Context app=activity.getApplicationContext();
++  final Context context=app==null?activity:app;
++  WeakReference<FavoritesActivity> ui=new WeakReference<>(activity);
++  FingerprintWorker.queue.execute(()->{
++   int changed=0;
++   try{
++    List<Missing> missing=new ArrayList<>();
++    try(FavoriteStore db=new FavoriteStore(context)){
++     JSONArray records=db.records();
++     for(int i=0;i<records.length();i++){
++      JSONObject r=records.getJSONObject(i);
++      String old=r.optString("uri","");
++      String hash=r.optString("sha256","");long size=r.optLong("size",-1);
++      if(hash.length()!=64||size<0||old.startsWith("umedjon-missing:"))continue;
++      try{PortableFiles.stat(context,old);continue;}catch(Exception unavailable){}
++      missing.add(new Missing(old,hash,size));
++     }
++    }
++    if(missing.isEmpty())return;
++    lastAttempt=android.os.SystemClock.elapsedRealtime();
++    Set<Long> sizes=new HashSet<>();for(Missing item:missing)sizes.add(item.size);
++    List<PortableFiles.Entry> files=PortableFiles.scan(context,PortableFiles.roots(context),
++     Collections.emptyList(),new AtomicBoolean(),state->{});
++    Map<String,List<PortableFiles.Entry>> candidates=new HashMap<>();
++    for(PortableFiles.Entry file:files){
++     if(!sizes.contains(file.size))continue;
++     try{String key=file.size+":"+PortableFiles.hash(context,file,new AtomicBoolean());
++      PortableFiles.add(candidates,key,file);
++     }catch(Exception unreadable){android.util.Log.d(TAG,"Skip inaccessible candidate");}
++    }
++    try(FavoriteStore db=new FavoriteStore(context)){
++     for(Missing item:missing){
++      List<PortableFiles.Entry> same=candidates.get(item.size+":"+item.sha);
++      if(same==null||same.size()!=1)continue;
++      PortableFiles.Entry file=same.get(0);
++      if(db.contains(file.uri)||!db.contains(item.uri))continue;
++      // Don't alter a live session's queue underneath its music decoder.
++      if(FavoritesFileActions.inLiveQueue(context,item.uri))continue;
++      String mediaId=db.mediaId(item.uri);
++      long bookmark=PlaybackMemory.position(context,item.uri,mediaId);
++      try{
++       db.relocate(item.uri,file.uri,file.uri,file.parent);
++       PlaybackMemory.position(context,file.uri,file.uri,bookmark,true);
++       FavoritesFileActions.replaceQueueEntry(context,item.uri,file.uri,file.parent);
++       changed++;
++      }catch(Exception failure){android.util.Log.w(TAG,"Relink transaction failed",failure);}
++     }
++    }
++   }catch(Exception e){android.util.Log.w(TAG,"Automatic exact-match relink unavailable",e);}
++   finally{
++    running.set(false);
++    if(changed>0)new Handler(Looper.getMainLooper()).post(()->{
++     FavoritesActivity current=ui.get();
++     if(current!=null&&!current.isFinishing()&&!current.isDestroyed())current.filesChanged();
++    });
++   }
++  });
++ }
++ private FavoritesAutoRelink(){}
++}
+--- a/src/com/umedjon/filemanager/FavoriteStore.java
++++ b/src/com/umedjon/filemanager/FavoriteStore.java
+@@ -16,4 +16,31 @@
+   if(!contains(uri))db.insertOrThrow("favorites",null,v);else if(replace)db.update("favorites",v,"uri=?",new String[]{uri});
+  }
+  void remove(String logical){getWritableDatabase().delete("favorites","logical_id=?",new String[]{logical});}
++ String mediaId(String uri){try(Cursor c=getReadableDatabase().rawQuery("SELECT media_id FROM favorites WHERE uri=?",new String[]{uri})){
++  return c.moveToFirst()?c.getString(0):uri;
++ }}
++ void removeUri(String uri){getWritableDatabase().delete("favorites","uri=?",new String[]{uri});}
++ void relocate(String original,String updated,String newMediaId,String folder)throws JSONException{
++  SQLiteDatabase db=getWritableDatabase();db.beginTransaction();try{
++   ContentValues cv=new ContentValues();cv.put("uri",updated);cv.put("media_id",newMediaId);
++   cv.put("folder",folder);cv.putNull("status");
++   String record=null;
++   try(Cursor cursor=db.rawQuery("SELECT record FROM favorites WHERE uri=?",new String[]{original})){
++    if(cursor.moveToFirst())record=cursor.getString(0);
++   }
++   JSONObject j;try{j=new JSONObject(record);}catch(Exception e){j=new JSONObject();}
++   j.put("uri",updated).put("media_id",newMediaId).put("folder",folder).put("status",JSONObject.NULL);
++   j.put("old_path",updated);
++   try{j.put("name",PortableFiles.stat(context,updated).name);}
++   catch(Exception ignored){j.put("name",android.net.Uri.parse(updated).getLastPathSegment());}
++   j.remove("candidates");j.remove("suggestions");
++   cv.put("record",j.toString());
++   if(!updated.equals(original)){try(Cursor collision=db.rawQuery("SELECT 1 FROM favorites WHERE uri=?",new String[]{updated})){
++    if(collision.moveToFirst())throw new JSONException("Новый файл уже добавлен в избранное");
++   }}
++   if(db.update("favorites",cv,"uri=?",new String[]{original})!=1)throw new JSONException("Не удалось обновить путь избранного");
++   db.setTransactionSuccessful();
++  }finally{db.endTransaction();}
++ }
++
+ }
+--- a/src/com/umedjon/filemanager/Hooks.java
++++ b/src/com/umedjon/filemanager/Hooks.java
+@@ -15,9 +15,28 @@
+   boolean selecting=Boolean.TRUE.equals(Bridge.get(adapter,"I0"));
+   if(check!=null){check.setVisibility(selecting?View.VISIBLE:View.GONE);quiet(check);}
+   final View name=(View)Bridge.get(holder,"u");if(name==null)return;
+-  name.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
+-  String title=String.valueOf(Bridge.call(item,"B"));name.setContentDescription(rowDescription(name,title));
+-  name.setAccessibilityDelegate(new View.AccessibilityDelegate(){public void onInitializeAccessibilityNodeInfo(View v,AccessibilityNodeInfo n){super.onInitializeAccessibilityNodeInfo(v,n);n.setContentDescription(rowDescription(v,title));AbsListView l=parentList(row);boolean selected=l!=null&&l.isItemChecked(pos);n.setCheckable(Boolean.TRUE.equals(Bridge.get(adapter,"I0")));n.setChecked(selected);n.addAction(new AccessibilityNodeInfo.AccessibilityAction(AccessibilityNodeInfo.ACTION_LONG_CLICK,"Выбрать"));}});
++  // A screenreader previously reached both the native list item and its
++  // filename/size/date descendants. Expose one logical file item instead.
++  // Compute the full description once on adapter bind, never on every swipe.
++  String title=String.valueOf(Bridge.call(item,"B"));
++  String description=rowDescription(row,title);
++  if(!android.text.TextUtils.equals(row.getContentDescription(),description))row.setContentDescription(description);
++  row.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
++  if(name.getContentDescription()!=null)name.setContentDescription(null);
++  name.setAccessibilityDelegate(null);
++  name.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
++  quietPassive(row,name);
++  row.setAccessibilityDelegate(new View.AccessibilityDelegate(){
++   public void onInitializeAccessibilityNodeInfo(View v,AccessibilityNodeInfo n){
++    super.onInitializeAccessibilityNodeInfo(v,n);
++    AbsListView l=parentList(row);
++    boolean selecting=Boolean.TRUE.equals(Bridge.get(adapter,"I0"));
++    n.setCheckable(selecting);
++    n.setChecked(selecting&&l!=null&&l.isItemChecked(pos));
++    if(selecting)n.addAction(new AccessibilityNodeInfo.AccessibilityAction(
++     AccessibilityNodeInfo.ACTION_LONG_CLICK,"Изменить выделение"));
++   }
++  });
+   ImageButton b=(ImageButton)row.findViewWithTag(Integer.valueOf(OPEN));
+   if(b==null){b=new ImageButton(row.getContext());b.setTag(Integer.valueOf(OPEN));b.setContentDescription("Открыть файл");int image=Bridge.res(row.getContext(),"drawable","ic_open_in_new");if(image==0)image=android.R.drawable.ic_menu_view;b.setImageResource(image);b.setBackgroundResource(android.R.color.transparent);int color=Bridge.res(row.getContext(),"color","main_primary_text");if(color!=0)b.setImageTintList(ColorStateList.valueOf(row.getContext().getResources().getColor(color)));int size=(int)(48*row.getResources().getDisplayMetrics().density);
+    if(name instanceof LinearLayout&&((LinearLayout)name).getOrientation()==LinearLayout.HORIZONTAL)((LinearLayout)name).addView(b,new LinearLayout.LayoutParams(size,size));else if(row instanceof FrameLayout){FrameLayout.LayoutParams lp=new FrameLayout.LayoutParams(size,size,Gravity.END|Gravity.BOTTOM);((FrameLayout)row).addView(b,lp);}else if(row instanceof ViewGroup)((ViewGroup)row).addView(b,new ViewGroup.LayoutParams(size,size));
+@@ -26,6 +45,28 @@
+   b.setOnClickListener(v->{try{Object f=Bridge.outer(Bridge.get(adapter,"s0"));if(f==null)throw new IllegalStateException("file owner");beginPreview(f);if(Bridge.has(f,"E8"))Bridge.call(f,"E8",item);else Preview.open(f,item,adapter);}catch(Throwable e){Bridge.error(row.getContext(),e);}});
+   if(row instanceof ViewGroup)((ViewGroup)row).setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
+  }catch(Throwable e){android.util.Log.e("UMEDJON","File row",e);}}
++ // Passive visual subfields are included in the item description; leaving
++ // them individually accessible creates extra stops with identical file data.
++ // Keep separately operable buttons, especially the selection-mode Open button.
++ static void quietPassive(View root,View name){
++  if(root instanceof ViewGroup){ViewGroup g=(ViewGroup)root;
++   for(int i=0;i<g.getChildCount();i++){
++    View child=g.getChildAt(i);
++    if(Integer.valueOf(OPEN).equals(child.getTag()))continue;
++    if(child==name||child instanceof TextView&&!(child instanceof Button)){
++     child.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
++     child.setFocusable(false);
++    }else if(child instanceof ImageView&&!child.isClickable())
++     child.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
++    else if(!(child instanceof ViewGroup)&&!child.isClickable()&&!child.isLongClickable())
++     child.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
++    if(child instanceof ViewGroup&&!child.isClickable()&&!child.isLongClickable()){
++     child.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
++     quietPassive(child,name);
++    }
++   }
++  }
++ }
+  static String rowDescription(View v,String title){
+   int id=Bridge.res(v.getContext(),"id","filename");View filename=id==0?null:v.findViewById(id);String primary=title;boolean counted=false;
+   // Media-folder labels already contain the name and item count. Use that
+--- a/src/com/umedjon/filemanager/Navigation.java
++++ b/src/com/umedjon/filemanager/Navigation.java
+@@ -2,7 +2,15 @@
+ import android.app.*;import android.content.*;import android.os.*;import android.view.*;import android.view.accessibility.*;import android.widget.*;
+ final public class Navigation {
+  static final String ACTION="com.umedjon.filemanager.OPEN_PLAYBACK_SOURCE";
+- public static boolean open(Activity a,Intent intent){if(PhotoPdfResultActivity.navigate(a,intent))return true;if(intent==null||!ACTION.equals(intent.getAction()))return false;try{
++ public static boolean open(Activity a,Intent intent){if(PhotoPdfResultActivity.navigate(a,intent))return true;
++  if(intent!=null&&intent.hasExtra("umedjon.favorite.folder")){
++   String folder=intent.getStringExtra("umedjon.favorite.folder");
++   String uri=intent.getStringExtra("umedjon.favorite.file_uri");
++   intent.removeExtra("umedjon.favorite.folder");intent.removeExtra("umedjon.favorite.file_uri");
++   try{Bridge.call(a,"p2",folder,(Runnable)()->focusFile(a,uri,0));}
++   catch(Throwable e){Bridge.error(a,e);}return true;
++  }
++  if(intent==null||!ACTION.equals(intent.getAction()))return false;try{
+   Bridge.call(Bridge.call(a,"j0"),"m",false);SharedPreferences p=Playback.prefs(a);String uri=p.getString("uri",null),id=p.getString("media_id",null);if("favorites".equals(p.getString("origin_kind",null))){a.startActivity(new Intent(a,FavoritesActivity.class).putExtra("umedjon.focus_uri",uri));return true;}
+   String folder=p.getString("origin_folder",p.getString("folder",null));
+   if(folder!=null&&!folder.isEmpty())Bridge.call(a,"p2",folder,(Runnable)()->focus(a,id,uri,0));
+@@ -12,6 +20,23 @@
+   Object f=Bridge.call(a,"F1");AbsListView l=Hooks.list(f);if(l!=null&&l.getAdapter()!=null){for(int i=0;i<l.getAdapter().getCount();i++){Object item=l.getAdapter().getItem(i);String key=String.valueOf(Bridge.call(item,"R"));if(key.equals(id)||key.equals(uri)){focusRow(l,i);return;}}}
+   focus(a,id,uri,attempt+1);
+  }catch(Throwable e){if(attempt<30)focus(a,id,uri,attempt+1);}},attempt==0?100:250);}
++ static void focusFile(Activity a,String uri,int attempt){
++  if(a.isFinishing()||uri==null||attempt>30)return;
++  a.getWindow().getDecorView().postDelayed(()->{
++   try{
++    String target=android.net.Uri.parse(uri).getPath();
++    Object fragment=Bridge.call(a,"F1");AbsListView l=Hooks.list(fragment);
++    if(l!=null&&l.getAdapter()!=null)for(int i=0;i<l.getAdapter().getCount();i++){
++     Object item=l.getAdapter().getItem(i);
++     Object file=Bridge.call(item,"O");
++     if(file instanceof java.io.File&&target.equals(((java.io.File)file).getAbsolutePath())){
++      focusRow(l,i);return;
++     }
++    }
++    focusFile(a,uri,attempt+1);
++   }catch(Exception e){if(attempt<30)focusFile(a,uri,attempt+1);}
++  },attempt==0?100:250);
++ }
+  // A newly inflated Favorites list can reset a setSelection() issued before
+  // its first layout. Defer the scroll until layout has finished, then focus
+  // the resulting row without resetting the adapter or moving any other rows.
+--- a/tests/release194/check.py
++++ b/tests/release194/check.py
+@@ -13,8 +13,9 @@
+ class Release194Structure(unittest.TestCase):
+     def test_version_and_signing_guard(self):
+         yml = (ROOT / "apk/apktool.yml").read_text()
+-        self.assertIn("versionCode: '2103105'", yml)
+-        self.assertIn("versionName: 19.4", yml)
++        self.assertRegex(yml, r"versionCode: '(\d+)'")
++        self.assertGreaterEqual(int(re.search(r"versionCode: '(\d+)'", yml).group(1)), 2103105)
++        self.assertIn("versionName: 19.", yml)
+         script = (ROOT / "scripts/build.py").read_text()
+         self.assertIn("6259589d30dcf7fb984b1f973ed50c7e2a32372a0eb05c13efaa2cbac554a899", script)
+ 
+--- a/tests/release195/check.py
++++ b/tests/release195/check.py
+@@ -10,8 +10,8 @@
+ class Release195(unittest.TestCase):
+     def test_version(self):
+         conf=(ROOT/'apk/apktool.yml').read_text()
+-        self.assertIn("versionCode: '2103110'",conf)
+-        self.assertIn('versionName: 19.9',conf)
++        self.assertIn("versionCode: '2103111'",conf)
++        self.assertIn('versionName: 19.10',conf)
+     def test_pdf_editor_integrated_save(self):
+         content=read('PdfEditorActivity.java')
+         self.assertNotIn('ACTION_CREATE_DOCUMENT',content)
+--- a/tests/release196/check.py
++++ b/tests/release196/check.py
+@@ -9,8 +9,8 @@
+ class Release196(unittest.TestCase):
+     def test_version_increments_from_public_195(self):
+         config = (ROOT / 'apk/apktool.yml').read_text()
+-        self.assertIn("versionCode: '2103110'", config)
+-        self.assertIn('versionName: 19.9', config)
++        self.assertIn("versionCode: '2103111'", config)
++        self.assertIn('versionName: 19.10', config)
+ 
+     def test_dialog_dismisses_only_after_successful_launch(self):
+         source = (SRC / 'PhotoPdfProgressDialog.java').read_text()
+--- a/tests/release197/check.py
++++ b/tests/release197/check.py
+@@ -11,8 +11,8 @@
+ class Favorites197(unittest.TestCase):
+     def test_version(self):
+         data=(ROOT/"apk/apktool.yml").read_text()
+-        self.assertIn("versionCode: '2103110'",data)
+-        self.assertIn("versionName: 19.9",data)
++        self.assertIn("versionCode: '2103111'",data)
++        self.assertIn("versionName: 19.10",data)
+ 
+     def test_real_identity_not_title(self):
+         self.assertIn('sameSource(currentSource,track[0])',SOURCE)
+@@ -33,7 +33,7 @@
+ 
+     def test_no_adapter_reset_on_player_callback(self):
+         start=SOURCE.index('void showPlayback(')
+-        end=SOURCE.index('protected void onResume()',start)
++        end=SOURCE.index(' public void onCreate(',start)
+         self.assertIn('refreshVisibleRows()',SOURCE[start:end])
+         self.assertNotIn('setAdapter(',SOURCE[start:end])
+         self.assertNotIn('notifyDataSetChanged(',SOURCE[start:end])
+--- a/tests/release198/check.py
++++ b/tests/release198/check.py
+@@ -11,8 +11,8 @@
+ class Widget198(unittest.TestCase):
+  def test_version_and_signer_gate(self):
+   version=(ROOT/'apk/apktool.yml').read_text()
+-  self.assertIn("versionCode: '2103110'",version)
+-  self.assertIn('versionName: 19.9',version)
++  self.assertIn("versionCode: '2103111'",version)
++  self.assertIn('versionName: 19.10',version)
+   self.assertIn('6259589d30dcf7fb984b1f973ed50c7e2a32372a0eb05c13efaa2cbac554a899',SCRIPT)
+ 
+  def test_widget_art_opens_original_source_without_fullscreen_override(self):
+@@ -45,6 +45,7 @@
+   self.assertIn('run_navigation cold',SCRIPT)
+   self.assertIn('NAVIGATION_TEST_PASS',SCRIPT)
+   self.assertIn('sha256sum -c "$tool_dir/logs/tested-apk-sha256.txt"',SCRIPT)
+-  self.assertIn('test -f "$RUNNER_TEMP/umedjon-emulator-199/logs/emulator-ok"',WORKFLOW)
++  self.assertIn('python3 -m unittest discover -s tests/release1910',WORKFLOW)
++  self.assertNotIn('reactivecircus/android-emulator-runner',WORKFLOW)
+ 
+ if __name__=='__main__':unittest.main()
+--- a/tests/release199/check.py
++++ b/tests/release199/check.py
+@@ -43,16 +43,17 @@
+   workflow=read('.github/workflows/build-release.yml')
+   script=read('scripts/emulator-test-199.sh')
+   config=read('apk/apktool.yml')
+-  self.assertIn("versionCode: '2103110'",config)
+-  self.assertIn('versionName: 19.9',config)
+-  self.assertIn('reactivecircus/android-emulator-runner@v2',workflow)
+-  self.assertIn('arch: x86_64',workflow)
++  self.assertIn("versionCode: '2103111'",config)
++  self.assertIn('versionName: 19.10',config)
++  self.assertIn('python3 -m unittest discover -s tests/release1910',workflow)
++  self.assertNotIn('reactivecircus/android-emulator-runner',workflow)
++  self.assertIn('runs-on: ubuntu-24.04',workflow)
+   self.assertIn('test -w /dev/kvm',script)
+   self.assertIn('apksigner" verify --verbose --print-certs',script)
+   self.assertIn('adb install -r "$signed_apk"',script)
+   self.assertIn('run_navigation navigation',script)
+   self.assertIn('run_navigation cold',script)
+   self.assertIn('sha256sum -c "$tool_dir/logs/tested-apk-sha256.txt"',script)
+-  self.assertIn('test -f "$RUNNER_TEMP/umedjon-emulator-199/logs/emulator-ok"',workflow)
++  self.assertIn('Create an unpublished draft',workflow)
+ 
+ if __name__=='__main__':unittest.main()
+--- /dev/null
++++ b/tests/release1910/check.py
+@@ -0,0 +1,137 @@
++"""Host regression gates for 19.10. NOT a substitute for device/TalkBack testing."""
++from pathlib import Path
++import re
++import sqlite3
++import unittest
++
++ROOT=Path(__file__).resolve().parents[2]
++def source(name):return (ROOT/'src/com/umedjon/filemanager'/name).read_text()
++F=source('FavoritesActivity.java')
++OPS=source('FavoritesFileActions.java')
++DB=source('FavoriteStore.java')
++HOOKS=source('Hooks.java')
++
++class FavoritesFiles1910(unittest.TestCase):
++ def test_version_and_original_signature_guard(self):
++  conf=(ROOT/'apk/apktool.yml').read_text()
++  self.assertIn("versionCode: '2103111'",conf)
++  self.assertIn('versionName: 19.10',conf)
++  self.assertIn('6259589d30dcf7fb984b1f973ed50c7e2a32372a0eb05c13efaa2cbac554a899',(ROOT/'scripts/build.py').read_text())
++ def test_selection_never_calls_play_on_long_press(self):
++  self.assertIn('list.setOnItemLongClickListener',F)
++  self.assertIn('container.setOnLongClickListener',F)
++  self.assertIn('ACTION_LONG_CLICK){toggle(track[0]);return true;}',F)
++  self.assertIn('if(selectionMode!=null){toggle(uri);return;}',F)
++  body=F.split('void toggle(String uri){')[1].split('final ActionMode.Callback')[0]
++  self.assertNotIn('play(',body)
++ def test_multiselect_and_menu(self):
++  for s in ('final LinkedHashSet<String> selected','startActionMode(selectionActions)',
++            '"Выделить всё"','"Снять выделение"','"Выбрано: "+selected.size()',
++            '"Копировать"','"Переместить"','"Переименовать"',
++            '"Удалить файл"','"Удалить из избранного"','"Поделиться"','"Свойства"'):
++   self.assertIn(s,F)
++  self.assertIn('selected.retainAll(idsOf(tracks))',F)
++ def test_distinct_deletions(self):
++  remove=OPS.split('static void removeFavorites(')[1].split('static void deleteFiles(')[0]
++  delete=OPS.split('static void deleteFiles(')[1].split('static void properties(')[0]
++  self.assertIn('db.removeUri(source)',remove)
++  self.assertNotIn('PortableFiles.delete',remove)
++  self.assertIn('PortableFiles.delete(a,source)',delete)
++  self.assertIn('db.removeUri(raw)',delete)
++  self.assertIn('"Удалить аудиофайлы?"',delete)
++ def test_move_does_not_delete_unverified_copy(self):
++  move=OPS.split('static void destination(')[1].split('static void rename(')[0]
++  self.assertIn('PortableFiles.hash(a,PortableFiles.stat(a,sourceUri),cancel)',move)
++  self.assertIn('PortableFiles.hash(a,PortableFiles.stat(a,created.toString()),cancel)',move)
++  self.assertLess(move.index('if(!before.equals(after))'),move.index('PortableFiles.delete(a,entry)'))
++  self.assertIn('relocate(a,created.toString(),sourceUri,entry.parent)',move)
++  self.assertIn('DocumentsContract.deleteDocument(a.getContentResolver(),created)',move)
++ def test_renamed_file_keeps_logical_record(self):
++  self.assertIn('db.relocate(old,updated,updated,folder)',OPS)
++  method=DB.split('void relocate(')[1]
++  self.assertIn('UPDATE',method.upper())
++  self.assertIn('db.update("favorites",cv,"uri=?"',method)
++  self.assertNotIn('db.delete("favorites"',method)
++  db=sqlite3.connect(':memory:')
++  db.execute('CREATE TABLE favorites(uri TEXT PRIMARY KEY,media_id TEXT,title TEXT,folder TEXT,added INTEGER NOT NULL,logical_id TEXT,record TEXT,status TEXT,sort_order INTEGER)')
++  db.execute("INSERT INTO favorites VALUES('file:///old.mp3','old-id','Модар','file:///music',1,'logical-1','{}',NULL,6)")
++  db.execute("UPDATE favorites SET uri='file:///new.mp3',media_id='file:///new.mp3' WHERE uri='file:///old.mp3'")
++  self.assertEqual(db.execute('SELECT logical_id,sort_order,title FROM favorites').fetchone(),('logical-1',6,'Модар'))
++ def test_existing_storage_and_share_engines(self):
++  for name in ('PortableFiles.stat','PortableFiles.delete','PortableFiles.open','PortableFiles.hash','ShareCompat.uriFor'):
++   self.assertIn(name,OPS)
++  self.assertIn('Intent.ACTION_OPEN_DOCUMENT_TREE',OPS)
++ def test_selection_keeps_scroll_and_playback_ui(self):
++  for item in ('getFirstVisiblePosition()','setSelectionFromTop','notifyDataSetChanged()',
++               'this::onPlaybackChanged','recalculateMatches();refreshVisibleRows()'):
++   self.assertIn(item,F)
++  self.assertIn('return stableId(logical==null?tracks.get(p)[0]:logical)',F)
++  self.assertIn('hasStableIds(){return true;}',F)
++ def test_missing_and_denied_sources_not_unsafe(self):
++  for x in ('menu.findItem(4).setVisible(allWritable)',
++             'menu.findItem(6).setVisible(allWritable)',
++             'menu.add(0,9,9,"Удалить из избранного")', # available even for missing tracks
++             'checkUriPermission','File file=new File(uri.getPath())'):
++   self.assertIn(x,F+'\n'+OPS)
++ def test_native_folder_entry_uses_existing_main_activity(self):
++  self.assertIn('umedjon.favorite.folder',OPS)
++  self.assertIn('Bridge.call(a,"p2",folder,(Runnable)()->focusFile(a,uri,0))',source('Navigation.java'))
++ def test_accessibility_selection_action(self):
++  self.assertIn('performAccessibilityAction(View v,int action,Bundle args)',F)
++  self.assertIn('"Выделить трек"',F)
++  self.assertIn('info.setSelected(marked)',F)
++  self.assertIn('info.setChecked(marked)',F)
++  self.assertIn('"Выделено, "+label',F)
++ def test_file_rows_have_single_logical_accessibility_node(self):
++  self.assertIn('row.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES)',HOOKS)
++  self.assertIn('name.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO)',HOOKS)
++  self.assertIn('quietPassive(row,name)',HOOKS)
++  self.assertIn('String description=rowDescription(row,title)',HOOKS)
++  self.assertNotIn('n.setContentDescription(rowDescription(',HOOKS)
++  self.assertIn('Integer.valueOf(OPEN).equals(child.getTag())',HOOKS)
++ def test_identity_on_dense_lists(self):
++  # Pure-data load check for stable 64-bit identities used by the adapter.
++  def stable_id(s):
++   h=0xcbf29ce484222325
++   for ch in s:h=((h^ord(ch))*0x100000001b3)&((1<<64)-1)
++   return h
++  for n in (50,300,1000,1500):
++   paths=[f'file:///storage/emulated/0/Download/{i:06d}_длинное_название_файла_{"x"*120}.mp3' for i in range(n)]
++   ids=[stable_id(x) for x in paths]
++   self.assertEqual(len(ids),len(set(ids)))
++   self.assertEqual([paths[i] for i in range(n)],paths)
++   self.assertNotEqual(stable_id(paths[0]),stable_id(paths[-1]))
++
++if __name__=='__main__':unittest.main()
++
++class FavoriteContinuity1910(unittest.TestCase):
++ def test_native_selection_row_and_list_are_shared(self):
++  layout=(ROOT/'apk/res/layout/umedjon_favorites.xml').read_text()
++  self.assertIn('com.alphainventor.filemanager.widget.FileListView',layout)
++  self.assertIn('filelist_item',F)
++  self.assertIn('"stub_checkbox"',F)
++  self.assertIn('"umedjon_selection_checkbox"',F)
++  self.assertIn('checkbox.setActivated(marked)',F)
++  self.assertIn('View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS',F)
++ def test_automatic_exact_relink_after_external_move(self):
++  relink=source('FavoritesAutoRelink.java')
++  self.assertIn('FavoritesAutoRelink.check(this)',F)
++  self.assertIn('FingerprintWorker.queue.execute',relink)
++  self.assertIn('PortableFiles.scan(',relink)
++  self.assertIn('item.size+":"+item.sha',relink)
++  self.assertIn('same.size()!=1',relink)
++  self.assertIn('db.relocate(item.uri,file.uri,file.uri,file.parent)',relink)
++  self.assertIn('FavoritesFileActions.replaceQueueEntry(context,item.uri,file.uri,file.parent)',relink)
++  self.assertIn('FavoritesFileActions.inLiveQueue(context,item.uri)',relink)
++  self.assertNotIn('db.removeUri(item.uri)',relink)
++ def test_move_keeps_favorite_identity(self):
++  target=DB.split('void relocate(')[1]
++  self.assertIn('db.update("favorites",cv,"uri=?"',target)
++  self.assertNotIn('db.delete("favorites"',target)
++  self.assertIn('j.put("uri",updated)',target)
++  self.assertIn('cv.put("folder",folder)',target)
++  self.assertIn('.put("folder",folder)',target)
++ def test_remove_favorite_is_not_file_delete(self):
++  only_fav=OPS.split('static void removeFavorites(')[1].split('static void deleteFiles(')[0]
++  self.assertIn('Сами аудиофайлы останутся',only_fav)
++  self.assertNotIn('PortableFiles.delete',only_fav)
