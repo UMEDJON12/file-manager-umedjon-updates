@@ -1,0 +1,1 @@
+Request draft for version 19.10. Do not publish. Android Emulator explicitly disabled at owner's request. Check source patch and signing before attaching assets.
